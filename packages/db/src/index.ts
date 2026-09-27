@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { PGlite } from "@electric-sql/pglite";
 import { parse } from "csv-parse/sync";
 
@@ -238,7 +237,7 @@ const pgModule = require("pg") as PgModule;
 
 class PostgresOperationalDatabase {
   private readonly pool: PgPoolLike;
-  private readonly manualTransactionClient = new AsyncLocalStorage<PgClientLike | undefined>();
+  private manualTransactionClient: PgClientLike | null = null;
 
   constructor(options: { databaseUrl: string; ssl?: boolean; poolMax?: number }) {
     const { Pool, types } = pgModule;
@@ -257,30 +256,24 @@ class PostgresOperationalDatabase {
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryLikeResult<T>> {
-    return (this.manualTransactionClient.getStore() || this.pool).query<T>(sql, params);
+    return (this.manualTransactionClient || this.pool).query<T>(sql, params);
   }
 
   async exec(sql: string): Promise<void> {
     const command = sql.trim().replace(/;+$/, "").toLowerCase();
     if (command === "begin") {
-      if (this.manualTransactionClient.getStore()) throw new Error("Ya hay una transaccion manual activa.");
-      const client = await this.pool.connect();
-      try {
-        await client.query("begin");
-      } catch (error) {
-        client.release?.();
-        throw error;
-      }
-      this.manualTransactionClient.enterWith(client);
+      if (this.manualTransactionClient) throw new Error("Ya hay una transaccion manual activa.");
+      this.manualTransactionClient = await this.pool.connect();
+      await this.manualTransactionClient.query("begin");
       return;
     }
     if (command === "commit" || command === "rollback") {
-      const client = this.manualTransactionClient.getStore();
+      const client = this.manualTransactionClient;
       if (!client) throw new Error(`No hay una transaccion manual activa para ${command}.`);
       try {
         await client.query(command);
       } finally {
-        this.manualTransactionClient.enterWith(undefined);
+        this.manualTransactionClient = null;
         client.release?.();
       }
       return;
