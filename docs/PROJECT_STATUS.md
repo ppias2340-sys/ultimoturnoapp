@@ -100,6 +100,9 @@ Actualizado: 2026-09-26
   ocultar precios y copiar la lista, copiar una grilla PNG, descargar CSV o
   descargar una o varias grillas PNG con las cartas agregadas. La grilla ajusta
   sus columnas y filas a las cartas presentes, sin exportar el lienzo 5x6 vacio.
+- Las grillas de carrito y claims prueban la URL preparada por la API y luego la
+  fuente publica original. Esto evita perder imagenes alojadas en Supabase y
+  evita volver a proxificar una URL que ya paso por `/image-proxy`.
 - Inventario abre por defecto mostrando cartas con stock. Disponibilidad,
   idioma y fuente de precio quedan siempre accesibles en una franja compacta;
   expansion, condicion, lote, ubicacion, estado, categoria y calidad se agrupan

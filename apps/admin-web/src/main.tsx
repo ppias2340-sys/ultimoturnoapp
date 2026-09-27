@@ -8831,10 +8831,10 @@ function assetUrl(value: string) {
   return value;
 }
 
-function canvasAssetUrl(value: string) {
-  const resolved = assetUrl(value);
-  if (/^https?:\/\//i.test(resolved)) return buildApiRequestUrl(`/image-proxy?url=${encodeURIComponent(resolved)}`);
-  return resolved;
+function canvasAssetUrls(value: string) {
+  const source = value.trim();
+  if (!source) return [];
+  return [...new Set([assetUrl(source), source])];
 }
 
 function exportInventoryCsv(items: StockRow[]) {
@@ -8973,7 +8973,7 @@ async function renderCartGridPng(items: CartExportItem[], includePrices: boolean
     const y = padding + row * (cardHeight + gap);
     context.fillStyle = "#111116";
     context.fillRect(x, y, cardWidth, cardHeight);
-    const image = item.imageUrl ? await loadCanvasImage(canvasAssetUrl(item.imageUrl)) : null;
+    const image = item.imageUrl ? await loadCanvasImage(canvasAssetUrls(item.imageUrl)) : null;
     if (image) drawCoverImage(context, image, x, y, cardWidth, cardHeight);
     else drawCartGridPlaceholder(context, item, x, y, cardWidth, cardHeight);
 
@@ -9196,7 +9196,7 @@ async function renderClaimGridPng(cards: ClaimCard[]): Promise<Blob> {
     context.fillStyle = "#111116";
     context.fillRect(x, y, cardWidth, cardHeight);
     if (!card) continue;
-    const image = card.imageUrl ? await loadCanvasImage(canvasAssetUrl(card.imageUrl)) : null;
+    const image = card.imageUrl ? await loadCanvasImage(canvasAssetUrls(card.imageUrl)) : null;
     if (image) {
       drawCoverImage(context, image, x, y, cardWidth, cardHeight);
     } else {
@@ -9209,14 +9209,18 @@ async function renderClaimGridPng(cards: ClaimCard[]): Promise<Blob> {
   });
 }
 
-function loadCanvasImage(src: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
-    image.src = src;
-  });
+async function loadCanvasImage(sources: string[]): Promise<HTMLImageElement | null> {
+  for (const src of sources) {
+    const image = await new Promise<HTMLImageElement | null>((resolve) => {
+      const candidate = new Image();
+      candidate.crossOrigin = "anonymous";
+      candidate.onload = () => resolve(candidate);
+      candidate.onerror = () => resolve(null);
+      candidate.src = src;
+    });
+    if (image) return image;
+  }
+  return null;
 }
 
 function drawCoverImage(context: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number) {
