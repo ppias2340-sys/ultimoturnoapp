@@ -3126,16 +3126,6 @@ async function requireResellerUser(request: IncomingMessage) {
   return user;
 }
 
-function parseCookies(cookieHeader: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  for (const part of (cookieHeader || "").split(";")) {
-    const [rawName, ...rawValue] = part.trim().split("=");
-    if (!rawName) continue;
-    cookies[rawName] = decodeURIComponent(rawValue.join("=") || "");
-  }
-  return cookies;
-}
-
 function accessKeyMatches(value: string) {
   if (!sharedAccessKey) return true;
   const expected = Buffer.from(sharedAccessKey);
@@ -3147,8 +3137,7 @@ function requestHasAccess(request: IncomingMessage) {
   if (!sharedAccessKey) return true;
   const headerValue = request.headers["x-ultimoturno-access-key"];
   const accessHeader = Array.isArray(headerValue) ? headerValue[0] : headerValue || "";
-  if (accessKeyMatches(accessHeader)) return true;
-  return accessKeyMatches(parseCookies(request.headers.cookie).ultimoturno_access_key || "");
+  return accessKeyMatches(accessHeader);
 }
 
 function requestHasCronAccess(request: IncomingMessage) {

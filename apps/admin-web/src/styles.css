@@ -21,25 +21,9 @@
   --button-shadow: 0 12px 26px rgba(245, 37, 70, 0.18);
 }
 
-.access-card > form,
-.access-key-fallback form {
+.access-card > form {
   display: grid;
   gap: 12px;
-}
-
-.access-key-fallback {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-}
-
-.access-key-fallback summary {
-  cursor: pointer;
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.access-key-fallback form {
-  margin-top: 12px;
 }
 
 .inventory-owner-label {

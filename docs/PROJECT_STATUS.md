@@ -43,6 +43,9 @@ Actualizado: 2026-09-27
 - Cuentas productivas creadas y verificadas: Mayra, Seb Admin y Melo con rol
   `admin`; German con rol `stock_owner`. Seb Admin usa una cuenta separada para
   conservar intacta la cuenta previa `Seb` del portal de revendedores.
+- La interfaz web exige sesion individual por email y password. La antigua clave
+  general ya no se guarda ni se acepta como cookie del navegador; permanece
+  disponible solo como encabezado tecnico para workers e integraciones.
 
 - El carrito movil ahora ocupa la pantalla disponible, mantiene totales y confirmacion accesibles, desplaza solo la lista de cartas y agrupa las herramientas de exportacion en un desplegable compacto.
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.

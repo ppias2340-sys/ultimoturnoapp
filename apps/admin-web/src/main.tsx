@@ -960,7 +960,6 @@ UT-CSV-INVALIDA,,Sin expansion,,EN,NM,normal,,,,,0,0,-10,`;
 
 function App() {
   const [accessRequired, setAccessRequired] = useState(false);
-  const [accessKeyDraft, setAccessKeyDraft] = useState(() => getStoredAccessKey());
   const [accessChecking, setAccessChecking] = useState(false);
   const [loginCredentials, setLoginCredentials] = useState({ email: "", password: "" });
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
@@ -1188,31 +1187,6 @@ function App() {
     setPriceChartingImages(await api<PriceChartingImageCacheStatus>("/pricecharting-images/status"));
   }
 
-  async function submitAccess(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextKey = accessKeyDraft.trim();
-    if (!nextKey) {
-      setError("Ingresa la clave de acceso.");
-      return;
-    }
-    setAccessChecking(true);
-    removeLocalStorage(adminSessionTokenKey);
-    setStoredAccessKey(nextKey);
-    try {
-      await bootstrap();
-      setInitialLoadComplete(true);
-      setAccessRequired(false);
-      setError("");
-      showMessage("Acceso habilitado.");
-    } catch (nextError) {
-      clearStoredAccessKey();
-      setAccessRequired(true);
-      setError(errorMessage(nextError));
-    } finally {
-      setAccessChecking(false);
-    }
-  }
-
   async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAccessChecking(true);
@@ -1242,9 +1216,18 @@ function App() {
   useEffect(() => {
     if (initialExamplesChecked) return;
     setInitialExamplesChecked(true);
+    clearStoredAccessKey();
+    if (!readLocalStorage(adminSessionTokenKey)) {
+      setAccessRequired(true);
+      setInitialLoadComplete(true);
+      return;
+    }
     bootstrap(true)
       .catch((nextError) => {
-        if (isAccessError(nextError)) setAccessRequired(true);
+        if (isAccessError(nextError)) {
+          removeLocalStorage(adminSessionTokenKey);
+          setAccessRequired(true);
+        }
         else setError(errorMessage(nextError));
       })
       .finally(() => setInitialLoadComplete(true));
@@ -2524,13 +2507,10 @@ function App() {
   if (accessRequired) {
     return (
       <AccessGate
-        value={accessKeyDraft}
         credentials={loginCredentials}
         error={error}
         checking={accessChecking}
-        onChange={setAccessKeyDraft}
         onCredentialsChange={setLoginCredentials}
-        onSubmit={submitAccess}
         onLogin={submitLogin}
       />
     );
@@ -7764,22 +7744,16 @@ function BootScreen() {
 }
 
 function AccessGate({
-  value,
   credentials,
   error,
   checking,
-  onChange,
   onCredentialsChange,
-  onSubmit,
   onLogin
 }: {
-  value: string;
   credentials: { email: string; password: string };
   error: string;
   checking: boolean;
-  onChange: (value: string) => void;
   onCredentialsChange: (value: { email: string; password: string }) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   onLogin: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
   return (
@@ -7795,20 +7769,6 @@ function AccessGate({
           <label><span>Password</span><input type="password" value={credentials.password} onChange={(event) => onCredentialsChange({ ...credentials, password: event.target.value })} placeholder="Password" /></label>
           <button type="submit" disabled={checking || !credentials.email || !credentials.password}>{checking ? "Ingresando..." : "Ingresar"}</button>
         </form>
-        <details className="access-key-fallback"><summary>Usar clave general</summary>
-        <form onSubmit={onSubmit}>
-        <label>
-          <span>Clave</span>
-          <input
-            type="password"
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="Clave de acceso"
-          />
-        </label>
-        <button type="submit" disabled={checking}>{checking ? "Verificando..." : "Entrar"}</button>
-        </form>
-        </details>
         {error ? <div className="access-error">{error}</div> : null}
       </section>
     </main>
@@ -7839,19 +7799,6 @@ function removeLocalStorage(key: string) {
     window.localStorage?.removeItem(key);
   } catch {
     // Sin accion: es solo persistencia local.
-  }
-}
-
-function getStoredAccessKey() {
-  return readLocalStorage(accessKeyStorageKey);
-}
-
-function setStoredAccessKey(value: string) {
-  writeLocalStorage(accessKeyStorageKey, value);
-  try {
-    document.cookie = `${accessKeyCookieName}=${encodeURIComponent(value)}; path=/; SameSite=Lax`;
-  } catch {
-    // El header igualmente queda cubierto por storage cuando esta disponible.
   }
 }
 
@@ -7912,7 +7859,6 @@ function buildApiRequestUrl(path: string) {
 }
 
 async function api<T>(path: string, options: { token?: string; method?: string; body?: unknown; signal?: AbortSignal; skipSession?: boolean } = {}): Promise<T> {
-  const accessKey = getStoredAccessKey();
   const sessionToken = options.skipSession ? "" : readLocalStorage(adminSessionTokenKey);
   const requestUrl = buildApiRequestUrl(path);
   const method = options.method || "GET";
@@ -7920,7 +7866,6 @@ async function api<T>(path: string, options: { token?: string; method?: string; 
     method,
     headers: {
       "Content-Type": "application/json",
-      ...(accessKey ? { "X-UltimoTurno-Access-Key": accessKey } : {}),
       ...(options.token || sessionToken ? { Authorization: `Bearer ${options.token || sessionToken}` } : {})
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
