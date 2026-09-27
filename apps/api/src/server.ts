@@ -330,7 +330,9 @@ const imageProxyAllowedHosts = new Set([
   "images.pricecharting.com",
   "storage.googleapis.com",
   "assets.tcgdex.net",
-  "tcgplayer-cdn.tcgplayer.com"
+  "tcgplayer-cdn.tcgplayer.com",
+  "lzmkskxzxjokborzydgj.supabase.co",
+  "images.scrydex.com"
 ]);
 let blueRateCache: { fetchedAt: number; payload: BlueExchangeRate } | null = null;
 

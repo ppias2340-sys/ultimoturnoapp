@@ -131,6 +131,10 @@ Actualizado: 2026-09-27
 - Las grillas de carrito y claims prueban la URL preparada por la API y luego la
   fuente publica original. Esto evita perder imagenes alojadas en Supabase y
   evita volver a proxificar una URL que ya paso por `/image-proxy`.
+- La exportacion tambien enruta por el proxy propio las imagenes publicas del
+  Storage de Supabase y Scrydex. Corrige los espacios vacios que aparecian en la
+  grilla aunque Ethan's Ho-Oh ex, Mega Starmie ex y Wellspring Mask Ogerpon ex
+  se vieran correctamente dentro del claim.
 - Inventario abre por defecto mostrando cartas con stock. Disponibilidad,
   idioma y fuente de precio quedan siempre accesibles en una franja compacta;
   expansion, condicion, lote, ubicacion, estado, categoria y calidad se agrupan
