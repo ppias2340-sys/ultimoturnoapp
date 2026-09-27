@@ -40,6 +40,9 @@ Actualizado: 2026-09-27
 - El flujo es independiente del portal de revendedores en consignacion. Las
   asignaciones de consignacion siguen compartiendo disponibilidad central;
   `stock_owner` representa mercaderia realmente separada por dueño.
+- Cuentas productivas creadas y verificadas: Mayra, Seb Admin y Melo con rol
+  `admin`; German con rol `stock_owner`. Seb Admin usa una cuenta separada para
+  conservar intacta la cuenta previa `Seb` del portal de revendedores.
 
 - El carrito movil ahora ocupa la pantalla disponible, mantiene totales y confirmacion accesibles, desplaza solo la lista de cartas y agrupa las herramientas de exportacion en un desplegable compacto.
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.
