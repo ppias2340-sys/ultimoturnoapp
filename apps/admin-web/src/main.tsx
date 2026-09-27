@@ -81,6 +81,7 @@ type InventoryFilters = {
   intakeBatch: string;
   inventoryStatus: string;
   tag: string;
+  owner: string;
   availability: AvailabilityFilter;
   priceSource: InventoryPriceSource;
   sortMode: SortMode;
@@ -105,6 +106,8 @@ type StockRow = {
   purchaseCurrency: string;
   id: string;
   businessId: string;
+  ownerUserId: string;
+  ownerName: string;
   sku: string;
   location: string;
   intakeBatch: string;
@@ -159,6 +162,16 @@ type StockSummary = {
   reservedUnits: number;
   availableUnits: number;
   stockValueArs: number;
+};
+
+type ManagedUser = {
+  id: string;
+  displayName: string;
+  email: string;
+  active: boolean;
+  roles: string[];
+  lastLoginAt?: string;
+  createdAt: string;
 };
 
 type InventoryResetResult = {
@@ -396,6 +409,7 @@ type CartExportItem = {
 
 type SaleRecord = {
   id: string;
+  createdByUserId?: string;
   customerName: string;
   saleType: "sale" | "reservation";
   status: "pending" | "packed" | "paid" | "delivered" | "cancelled";
@@ -896,6 +910,7 @@ type ImageBatchResult = {
 };
 
 type InventoryFormState = {
+  ownerUserId: string;
   purchaseCost: number | null;
   purchaseCurrency: string;
   sku: string;
@@ -925,6 +940,7 @@ type InventoryFormState = {
 const apiBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
 const accessKeyStorageKey = "ultimoturno_access_key";
 const accessKeyCookieName = "ultimoturno_access_key";
+const adminSessionTokenKey = "ultimoturno_admin_session";
 const importDraftStorageKey = "ultimoturno_import_stock_draft_v2";
 const mobileHelperStorageKey = "ultimoturno_mobile_helper_name";
 const mobileBatchStorageKey = "ultimoturno_mobile_default_batch";
@@ -946,6 +962,7 @@ function App() {
   const [accessRequired, setAccessRequired] = useState(false);
   const [accessKeyDraft, setAccessKeyDraft] = useState(() => getStoredAccessKey());
   const [accessChecking, setAccessChecking] = useState(false);
+  const [loginCredentials, setLoginCredentials] = useState({ email: "", password: "" });
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [viewRefreshing, setViewRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState("");
@@ -954,6 +971,9 @@ function App() {
   const activeViewRefreshes = useRef(0);
   const routeInitialized = useRef(false);
   const [userName, setUserName] = useState("");
+  const [userId, setUserId] = useState("");
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [environment, setEnvironment] = useState<AppEnvironment>({ dataProfile: "EJEMPLOS", allowExamples: true });
   const [blueRate, setBlueRate] = useState<BlueExchangeRate>(() => fallbackBlueRate());
   const [view, setView] = useState<View>(() => viewFromLocation());
@@ -1007,6 +1027,7 @@ function App() {
   const [batchFilter, setBatchFilter] = useState("all");
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
   const [availability, setAvailability] = useState<AvailabilityFilter>("available");
   const [inventoryPriceSource, setInventoryPriceSource] = useState<InventoryPriceSource>("sale");
   const [inventoryDensity, setInventoryDensity] = useState<InventoryDensity>("comfortable");
@@ -1037,14 +1058,22 @@ function App() {
   const [catalogLanguageGroup, setCatalogLanguageGroup] = useState<LanguageGroupFilter>("all");
 
   async function bootstrap(seedExamplesIfEmpty = false) {
-    const routeRequest = refreshViewData(view);
     const [me, rate] = await Promise.all([
-      api<{ user: { displayName: string }; environment?: AppEnvironment }>("/auth/me"),
-      api<BlueExchangeRate>("/exchange-rate/blue").catch(() => fallbackBlueRate()),
-      routeRequest
+      api<{ user: { id: string; displayName: string; roles?: string[] }; roles?: string[]; environment?: AppEnvironment }>("/auth/me"),
+      api<BlueExchangeRate>("/exchange-rate/blue").catch(() => fallbackBlueRate())
     ]);
     const nextEnvironment = me.environment || { dataProfile: "EJEMPLOS", allowExamples: true };
     setUserName(me.user.displayName);
+    setUserId(me.user.id);
+    const nextRoles = me.roles || me.user.roles || ["admin"];
+    const ownerRestricted = nextRoles.includes("stock_owner") && !nextRoles.includes("admin");
+    const targetView = ownerRestricted && view !== "inventory" && view !== "stock-intake" ? "inventory" : view;
+    setUserRoles(nextRoles);
+    if (nextRoles.includes("admin")) {
+      setManagedUsers((await api<{ users: ManagedUser[] }>("/users")).users);
+    } else {
+      setManagedUsers([{ id: me.user.id, displayName: me.user.displayName, email: "", active: true, roles: nextRoles, createdAt: "" }]);
+    }
     setEnvironment(nextEnvironment);
     setBlueRate(rate);
 
@@ -1055,7 +1084,11 @@ function App() {
         if (result.created > 0) showMessage(`Cargue ${result.created} ejemplos para que puedas revisar el flujo.`);
       }
     }
-    await refreshViewData(view);
+    if (targetView !== view) {
+      setView(targetView);
+      window.history.replaceState({}, "", viewPaths[targetView]);
+    }
+    await refreshViewData(targetView);
   }
 
   async function refresh() {
@@ -1163,6 +1196,7 @@ function App() {
       return;
     }
     setAccessChecking(true);
+    removeLocalStorage(adminSessionTokenKey);
     setStoredAccessKey(nextKey);
     try {
       await bootstrap();
@@ -1173,6 +1207,32 @@ function App() {
     } catch (nextError) {
       clearStoredAccessKey();
       setAccessRequired(true);
+      setError(errorMessage(nextError));
+    } finally {
+      setAccessChecking(false);
+    }
+  }
+
+  async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAccessChecking(true);
+    try {
+      const result = await api<{ token: string; user: { id: string; displayName: string; roles: string[] } }>("/auth/login", { method: "POST", body: loginCredentials, skipSession: true });
+      writeLocalStorage(adminSessionTokenKey, result.token);
+      clearStoredAccessKey();
+      setUserId(result.user.id);
+      setUserName(result.user.displayName);
+      setUserRoles(result.user.roles);
+      if (result.user.roles.includes("stock_owner") && !result.user.roles.includes("admin") && view !== "inventory" && view !== "stock-intake") {
+        window.location.assign(viewPaths.inventory);
+        return;
+      }
+      await bootstrap();
+      setInitialLoadComplete(true);
+      setAccessRequired(false);
+      setError("");
+    } catch (nextError) {
+      removeLocalStorage(adminSessionTokenKey);
       setError(errorMessage(nextError));
     } finally {
       setAccessChecking(false);
@@ -1287,6 +1347,7 @@ function App() {
           (batchFilter === "all" || item.intakeBatch === batchFilter) &&
           (inventoryStatusFilter === "all" || (item.inventoryStatus || "available") === inventoryStatusFilter) &&
           (tagFilter === "all" || inventoryTags(item.tags).includes(tagFilter)) &&
+          (ownerFilter === "all" || (ownerFilter === "ultimoturno" ? !item.ownerUserId : item.ownerUserId === ownerFilter)) &&
           (issue === "all" || stockItemIssues(item, duplicateKeys).includes(issue)) &&
           (availability === "all" ||
             (availability === "available" && item.availableQuantity > 0) ||
@@ -1304,7 +1365,7 @@ function App() {
         return leftItem.product.name.localeCompare(rightItem.product.name, "es");
       })
       .map(({ item }) => item);
-  }, [availability, batchFilter, blueRate, condition, duplicateKeys, expansion, inventoryPriceSource, inventoryStatusFilter, issue, language, languageGroup, locationFilter, query, sortMode, stock.items, tagFilter]);
+  }, [availability, batchFilter, blueRate, condition, duplicateKeys, expansion, inventoryPriceSource, inventoryStatusFilter, issue, language, languageGroup, locationFilter, ownerFilter, query, sortMode, stock.items, tagFilter]);
 
   function showMessage(text: string) {
     setMessage(text);
@@ -1319,7 +1380,7 @@ function App() {
   function startCreate() {
     setProductReceipt("");
     setEditingId("");
-    setForm({ ...blankForm(), quantityOnHand: 1 });
+    setForm({ ...blankForm(), ownerUserId: userRoles.includes("stock_owner") && !userRoles.includes("admin") ? userId : "", quantityOnHand: 1 });
     setProductModalOpen(false);
     setView("stock-intake");
   }
@@ -1380,7 +1441,7 @@ function App() {
       showMessage(receipt);
       setProductReceipt(receipt);
       if (editingId) { setEditingId(""); setProductModalOpen(false); }
-      else { setForm({ ...blankForm(), quantityOnHand: 1 }); setProductModalOpen(false); }
+      else { setForm({ ...blankForm(), ownerUserId: userRoles.includes("stock_owner") && !userRoles.includes("admin") ? userId : form.ownerUserId, quantityOnHand: 1 }); setProductModalOpen(false); }
       void refresh().catch(() => undefined);
     } catch (nextError) {
       showError(nextError);
@@ -2464,13 +2525,24 @@ function App() {
     return (
       <AccessGate
         value={accessKeyDraft}
+        credentials={loginCredentials}
         error={error}
         checking={accessChecking}
         onChange={setAccessKeyDraft}
+        onCredentialsChange={setLoginCredentials}
         onSubmit={submitAccess}
+        onLogin={submitLogin}
       />
     );
   }
+
+  const restrictedStockOwner = userRoles.includes("stock_owner") && !userRoles.includes("admin");
+  const logoutPanel = async () => {
+    await api("/auth/logout", { method: "POST" }).catch(() => undefined);
+    removeLocalStorage(adminSessionTokenKey);
+    clearStoredAccessKey();
+    window.location.assign(viewPaths.inventory);
+  };
 
   return (
     <main className={`shell ${view === "mobile-intake" ? "mobile-mode" : ""} ${view === "orders" ? "orders-mode" : ""} ${view === "stock-intake" ? "stock-intake-mode" : ""}`}>
@@ -2489,13 +2561,14 @@ function App() {
           </div>
           <span className={`live-sync-status ${viewRefreshing ? "syncing" : ""}`}><i />{viewRefreshing ? "Sincronizando" : lastSyncedAt ? `En vivo · ${new Date(lastSyncedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}` : "En vivo"}</span>
           <button className="secondary-action header-refresh" disabled={viewRefreshing} onClick={() => void refreshViewData(view).catch(showError)}><Icon name="refresh" />{viewRefreshing ? "Actualizando" : "Actualizar sector"}</button>
+          {readLocalStorage(adminSessionTokenKey) ? <button className="secondary-action" onClick={() => void logoutPanel()}>Salir</button> : null}
         </div>
       </header>
 
       <nav className="nav" aria-label="Navegacion principal">
-        <NavButton href={viewPaths.dashboard} icon="home" active={view === "dashboard"} onClick={() => setView("dashboard")}>Inicio</NavButton>
+        {!restrictedStockOwner ? <NavButton href={viewPaths.dashboard} icon="home" active={view === "dashboard"} onClick={() => setView("dashboard")}>Inicio</NavButton> : null}
         <NavButton href={viewPaths.inventory} icon="inventory" active={view === "inventory" || view === "stock-intake"} onClick={() => setView("inventory")}>Inventario</NavButton>
-        <NavButton href={viewPaths.orders} icon="orders" active={view === "orders"} onClick={() => setView("orders")}>Ordenes</NavButton>
+        {!restrictedStockOwner ? <><NavButton href={viewPaths.orders} icon="orders" active={view === "orders"} onClick={() => setView("orders")}>Ordenes</NavButton>
         <NavButton href={viewPaths.sales} icon="sales" active={view === "sales"} onClick={() => setView("sales")}>Caja</NavButton>
         <NavButton href={viewPaths.claims} icon="claims" active={view === "claims" || view === "claim-planner"} onClick={() => setView("claims")}>Claims</NavButton>
         <details className="more-nav">
@@ -2513,10 +2586,10 @@ function App() {
             <NavButton href={viewPaths.movements} icon="activity" active={view === "movements"} onClick={() => setView("movements")}>Movimientos</NavButton>
             <NavButton href={viewPaths.admin} icon="settings" active={view === "admin"} onClick={() => setView("admin")}>Admin</NavButton>
           </div>
-        </details>
+        </details></> : null}
       </nav>
 
-      {view !== "stock-intake" && staleAutomaticSources.length ? (
+      {!restrictedStockOwner && view !== "stock-intake" && staleAutomaticSources.length ? (
         <section className="automation-alert" role="alert">
           <Icon name="activity" />
           <div>
@@ -2527,7 +2600,7 @@ function App() {
         </section>
       ) : null}
 
-      {view !== "stock-intake" ? <OperationsDock
+      {!restrictedStockOwner && view !== "stock-intake" ? <OperationsDock
         collectedTodayArs={collectedTodayArs}
         pendingDebtArs={pendingDebtArs}
         overdueDebtCount={overdueDebtCount}
@@ -2595,7 +2668,7 @@ function App() {
           selected={selected}
           selectedMovements={selectedMovements}
           options={options}
-          filters={{ query, expansion, language, languageGroup, condition, location: locationFilter, intakeBatch: batchFilter, inventoryStatus: inventoryStatusFilter, tag: tagFilter, availability, priceSource: inventoryPriceSource, sortMode, issue }}
+          filters={{ query, expansion, language, languageGroup, condition, location: locationFilter, intakeBatch: batchFilter, inventoryStatus: inventoryStatusFilter, tag: tagFilter, owner: ownerFilter, availability, priceSource: inventoryPriceSource, sortMode, issue }}
           density={inventoryDensity}
           quality={quality}
           adjustment={adjustment}
@@ -2616,6 +2689,7 @@ function App() {
             if (patch.intakeBatch !== undefined) setBatchFilter(patch.intakeBatch);
             if (patch.inventoryStatus !== undefined) setInventoryStatusFilter(patch.inventoryStatus);
             if (patch.tag !== undefined) setTagFilter(patch.tag);
+            if (patch.owner !== undefined) setOwnerFilter(patch.owner);
             if (patch.availability !== undefined) setAvailability(patch.availability);
             if (patch.priceSource !== undefined) setInventoryPriceSource(patch.priceSource);
             if (patch.sortMode !== undefined) setSortMode(patch.sortMode);
@@ -2631,6 +2705,7 @@ function App() {
             setBatchFilter("all");
             setInventoryStatusFilter("all");
             setTagFilter("all");
+            setOwnerFilter("all");
             setAvailability("available");
             setInventoryPriceSource("sale");
             setSortMode("name");
@@ -2671,6 +2746,8 @@ function App() {
           saving={productSaving}
           priceChartingCache={priceChartingCache}
           allItems={stock.items}
+          ownerOptions={managedUsers.filter((user) => user.active && user.roles.includes("stock_owner"))}
+          canChooseOwner={userRoles.includes("admin")}
           onSearchPriceCharting={(search) => void searchPriceChartingCache(search)}
         />
       ) : null}
@@ -2781,6 +2858,8 @@ function App() {
           priceChartingImageBackfillRunning={priceChartingImageBackfillRunning}
           priceChartingImageResumeAt={priceChartingImageResumeAt}
           lastBatch={priceChartingImageLastBatch}
+          users={managedUsers}
+          onUserCreated={(user) => setManagedUsers((current) => [...current, user].sort((left, right) => left.displayName.localeCompare(right.displayName)))}
           onRefresh={() => void refresh()}
           onGoImport={() => setView("import")}
           onGoCatalog={() => setView("catalog")}
@@ -2816,6 +2895,8 @@ function App() {
           onForceManualImage={forceProductImageManual}
           priceChartingCache={priceChartingCache}
           allItems={stock.items}
+          ownerOptions={managedUsers.filter((user) => user.active && user.roles.includes("stock_owner"))}
+          canChooseOwner={userRoles.includes("admin")}
           onSearchPriceCharting={(search) => void searchPriceChartingCache(search)}
         />
       ) : null}
@@ -3248,6 +3329,7 @@ function InventoryView(props: {
   const [batchTags, setBatchTags] = useState("");
   const [batchPriceSource, setBatchPriceSource] = useState<"none" | InventoryPriceSource>("none");
   const advancedFilterCount = [filters.expansion, filters.language, filters.condition, filters.location, filters.intakeBatch, filters.inventoryStatus, filters.tag, filters.issue].filter((value) => value !== "all").length;
+  const ownerOptions = useMemo(() => unique(allItems.filter((item) => item.ownerUserId).map((item) => `${item.ownerUserId}\t${item.ownerName}`)), [allItems]);
   const availabilityCounts = useMemo(() => ({
     all: allItems.length,
     available: allItems.filter((item) => item.availableQuantity > 0).length,
@@ -3346,6 +3428,7 @@ function InventoryView(props: {
             ))}
           </div>
           <LanguageGroupSelector value={filters.languageGroup} onChange={(value) => props.onFilterChange({ languageGroup: value })} />
+          {ownerOptions.length ? <label className="inventory-quick-select">Propietario<select value={filters.owner} onChange={(event) => props.onFilterChange({ owner: event.target.value })}><option value="all">Todos</option><option value="ultimoturno">UltimoTurno</option>{ownerOptions.map((value) => { const [id, name] = value.split("\t"); return <option value={id} key={id}>{name}</option>; })}</select></label> : null}
           <label className="inventory-quick-select">Precio<select value={filters.priceSource} onChange={(event) => props.onFilterChange({ priceSource: event.target.value as InventoryPriceSource })}>
             <option value="sale">Venta ({priceSourceCounts.sale})</option>
             <option value="pricecharting">PriceCharting ({priceSourceCounts.pricecharting})</option>
@@ -3426,6 +3509,7 @@ function InventoryView(props: {
                       </div>
                       <div className="inventory-card-body">
                         <strong>{item.product.name}</strong>
+                        <span className="inventory-owner-label">Stock: {item.ownerName || "UltimoTurno"}</span>
                         <span>{item.product.expansion} #{item.product.number || "-"}</span>
                         <small>{inventoryVariantLabel(item)}</small>
                         <div className={`inventory-tag-list compact ${itemTags.length ? "" : "empty"}`}>{itemTags.map((tag) => <span key={tag}>{tag}</span>)}</div>
@@ -3744,7 +3828,7 @@ function CartPriceControl({ value, onChange }: { value: number; onChange: (value
   );
 }
 
-function ProductModal({ receipt, form, editing, onChange, onSubmit, onClose, blueRate, saving, imageForcing, onForceImage, onForceManualImage, priceChartingCache, allItems, onSearchPriceCharting }: {
+function ProductModal({ receipt, form, editing, onChange, onSubmit, onClose, blueRate, saving, imageForcing, onForceImage, onForceManualImage, priceChartingCache, allItems, ownerOptions, canChooseOwner, onSearchPriceCharting }: {
   receipt: string;
   form: InventoryFormState;
   editing: boolean;
@@ -3758,6 +3842,8 @@ function ProductModal({ receipt, form, editing, onChange, onSubmit, onClose, blu
   onForceManualImage: () => void;
   priceChartingCache: { entries: PriceChartingCacheEntry[]; status: PriceChartingCacheStatus };
   allItems: StockRow[];
+  ownerOptions: ManagedUser[];
+  canChooseOwner: boolean;
   onSearchPriceCharting: (search: string) => void;
 }) {
   useEffect(() => {
@@ -3780,13 +3866,13 @@ function ProductModal({ receipt, form, editing, onChange, onSubmit, onClose, blu
           <button className="modal-close" aria-label="Cerrar formulario" title="Cerrar" onClick={onClose}><Icon name="close" /></button>
         </header>
         {receipt ? <p className="intake-feedback" role="status">{receipt} Podes buscar la siguiente carta.</p> : null}
-        <InventoryForm form={form} onChange={onChange} onSubmit={onSubmit} onCancel={onClose} submitLabel={editing ? "Guardar cambios" : "Agregar stock y seguir"} blueRate={blueRate} saving={saving} editing={editing} imageForcing={imageForcing} onForceImage={onForceImage} onForceManualImage={onForceManualImage} priceChartingCache={priceChartingCache} allItems={allItems} onSearchPriceCharting={onSearchPriceCharting} />
+        <InventoryForm form={form} onChange={onChange} onSubmit={onSubmit} onCancel={onClose} submitLabel={editing ? "Guardar cambios" : "Agregar stock y seguir"} blueRate={blueRate} saving={saving} editing={editing} imageForcing={imageForcing} onForceImage={onForceImage} onForceManualImage={onForceManualImage} priceChartingCache={priceChartingCache} allItems={allItems} ownerOptions={ownerOptions} canChooseOwner={canChooseOwner} onSearchPriceCharting={onSearchPriceCharting} />
       </section>
     </div>
   );
 }
 
-function StockIntakeView({ receipt, form, onChange, onSubmit, onClose, blueRate, saving, priceChartingCache, allItems, onSearchPriceCharting }: {
+function StockIntakeView({ receipt, form, onChange, onSubmit, onClose, blueRate, saving, priceChartingCache, allItems, ownerOptions, canChooseOwner, onSearchPriceCharting }: {
   receipt: string;
   form: InventoryFormState;
   onChange: (form: InventoryFormState) => void;
@@ -3796,6 +3882,8 @@ function StockIntakeView({ receipt, form, onChange, onSubmit, onClose, blueRate,
   saving: boolean;
   priceChartingCache: { entries: PriceChartingCacheEntry[]; status: PriceChartingCacheStatus };
   allItems: StockRow[];
+  ownerOptions: ManagedUser[];
+  canChooseOwner: boolean;
   onSearchPriceCharting: (search: string) => void;
 }) {
   return (
@@ -3812,12 +3900,12 @@ function StockIntakeView({ receipt, form, onChange, onSubmit, onClose, blueRate,
         <button className="secondary-action stock-intake-back" type="button" onClick={onClose} aria-label="Volver al inventario" title="Volver al inventario"><Icon name="close" /><span>Volver al inventario</span></button>
       </header>
       {receipt ? <p className="intake-feedback stock-intake-feedback" role="status">{receipt} Podes buscar la siguiente carta.</p> : null}
-      <InventoryForm form={form} onChange={onChange} onSubmit={onSubmit} onCancel={onClose} submitLabel="Agregar stock y seguir" blueRate={blueRate} saving={saving} editing={false} fullPage imageForcing="" onForceImage={() => undefined} onForceManualImage={() => undefined} priceChartingCache={priceChartingCache} allItems={allItems} onSearchPriceCharting={onSearchPriceCharting} />
+      <InventoryForm form={form} onChange={onChange} onSubmit={onSubmit} onCancel={onClose} submitLabel="Agregar stock y seguir" blueRate={blueRate} saving={saving} editing={false} fullPage imageForcing="" onForceImage={() => undefined} onForceManualImage={() => undefined} priceChartingCache={priceChartingCache} allItems={allItems} ownerOptions={ownerOptions} canChooseOwner={canChooseOwner} onSearchPriceCharting={onSearchPriceCharting} />
     </section>
   );
 }
 
-function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRate, saving, editing, fullPage = false, imageForcing, onForceImage, onForceManualImage, priceChartingCache, allItems, onSearchPriceCharting }: {
+function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRate, saving, editing, fullPage = false, imageForcing, onForceImage, onForceManualImage, priceChartingCache, allItems, ownerOptions, canChooseOwner, onSearchPriceCharting }: {
   form: InventoryFormState;
   onChange: (form: InventoryFormState) => void;
   onSubmit: (event: React.FormEvent) => void;
@@ -3832,6 +3920,8 @@ function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRa
   onForceManualImage: () => void;
   priceChartingCache: { entries: PriceChartingCacheEntry[]; status: PriceChartingCacheStatus };
   allItems: StockRow[];
+  ownerOptions: ManagedUser[];
+  canChooseOwner: boolean;
   onSearchPriceCharting: (search: string) => void;
 }) {
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -4015,6 +4105,7 @@ function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRa
           {!editing ? <section className="edit-section quick-stock-fields">
             <div className="edit-section-heading"><h3>Agregar existencias</h3><span>El costo es opcional</span></div>
             <div className="edit-field-grid">
+              {canChooseOwner ? <label>Propietario<select value={form.ownerUserId} onChange={(event) => set({ ownerUserId: event.target.value })}><option value="">UltimoTurno</option>{ownerOptions.map((owner) => <option value={owner.id} key={owner.id}>{owner.displayName}</option>)}</select></label> : null}
               <label>Cantidad a agregar<input autoFocus required type="number" min={1} step={1} value={form.quantityOnHand} onChange={(event) => set({ quantityOnHand: Number(event.target.value) })} /></label>
               <label>Precio de venta ARS<input type="number" min={minimumSalePriceArs} step={100} value={form.priceArs || ""} onChange={(event) => setSalePriceArs(event.target.value)} onBlur={() => form.priceArs ? set({ priceArs: roundRecommendedArs(form.priceArs), priceUsd: roundUsd(fromBlueArs(roundRecommendedArs(form.priceArs), blueRate)) }) : applyRecommendedPrice()} placeholder="Opcional" /></label>
               <label>Precio de venta USD<input type="number" min={0} step={0.01} value={form.priceUsd ?? ""} onChange={(event) => setSalePriceUsd(event.target.value)} placeholder="Opcional" /></label>
@@ -5757,6 +5848,36 @@ function ResellerPortal() {
   );
 }
 
+function UserManagementPanel({ users, onCreated }: { users: ManagedUser[]; onCreated: (user: ManagedUser) => void }) {
+  const [form, setForm] = useState({ displayName: "", email: "", password: "", role: "stock_owner" as "admin" | "stock_owner" });
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setFeedback("");
+    try {
+      const result = await api<{ user: ManagedUser }>("/users", { method: "POST", body: form });
+      onCreated(result.user);
+      setForm({ displayName: "", email: "", password: "", role: "stock_owner" });
+      setFeedback(`${result.user.displayName} creado correctamente.`);
+    } catch (error) { setFeedback(errorMessage(error)); }
+    finally { setSaving(false); }
+  }
+  return <section className="panel user-management-panel">
+    <div className="section-heading"><div><h3>Usuarios y propietarios</h3><p>Los administradores operan todo. Los propietarios solo cargan y venden su propio stock.</p></div></div>
+    <div className="managed-user-list">{users.map((user) => <div key={user.id}><span><strong>{user.displayName}</strong><small>{user.email}</small></span><b>{user.roles.includes("admin") ? "Administrador" : user.roles.includes("stock_owner") ? "Stock propio" : user.roles.join(", ")}</b><em>{user.active ? "Activo" : "Inactivo"}</em></div>)}</div>
+    <form className="managed-user-create" onSubmit={submit}>
+      <input required placeholder="Nombre" value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} />
+      <input required type="email" placeholder="Email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+      <input required minLength={10} type="password" placeholder="Password inicial" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+      <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as "admin" | "stock_owner" })}><option value="admin">Administrador</option><option value="stock_owner">Stock propio</option></select>
+      <button className="primary-action" disabled={saving}><Icon name="plus" />{saving ? "Creando..." : "Crear usuario"}</button>
+    </form>
+    {feedback ? <p className="muted" role="status">{feedback}</p> : null}
+  </section>;
+}
+
 function AdminView(props: {
   environment: AppEnvironment;
   blueRate: BlueExchangeRate;
@@ -5792,6 +5913,8 @@ function AdminView(props: {
   onRepairPriceChartingImageManual: (item: ImageDatabaseQuality["failedImages"][number]) => void;
   onPriceChartingBackfillChange: (running: boolean) => void;
   onResetInventoryStock: () => void;
+  users: ManagedUser[];
+  onUserCreated: (user: ManagedUser) => void;
 }) {
   const totalIssues = props.quality.missingImage + props.quality.missingPriceCharting + props.quality.zeroPrice + props.quality.lowStock + props.quality.duplicates;
   const imageReady = Math.max(props.priceChartingImages.urlEntries, props.priceChartingImages.downloadedEntries);
@@ -5852,6 +5975,8 @@ function AdminView(props: {
           <button className="primary-action" onClick={props.onGoImport}><Icon name="import" />Importar stock</button>
         </div>
       </section>
+
+      <UserManagementPanel users={props.users} onCreated={props.onUserCreated} />
 
       <section className="metrics admin-metrics">
         <Metric label="Perfil" value={props.environment.dataProfile} helper={props.environment.allowExamples ? "permite ejemplos" : "datos reales"} />
@@ -7640,38 +7765,52 @@ function BootScreen() {
 
 function AccessGate({
   value,
+  credentials,
   error,
   checking,
   onChange,
-  onSubmit
+  onCredentialsChange,
+  onSubmit,
+  onLogin
 }: {
   value: string;
+  credentials: { email: string; password: string };
   error: string;
   checking: boolean;
   onChange: (value: string) => void;
+  onCredentialsChange: (value: { email: string; password: string }) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onLogin: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <main className="access-shell">
-      <form className="access-card" onSubmit={onSubmit}>
+      <section className="access-card">
         <img className="brand-mark" src="/brand/ultimo-turno-logo.jpeg" alt="UltimoTurno" />
         <div>
           <h1>UltimoTurno</h1>
           <p className="subtitle">Acceso privado</p>
         </div>
+        <form onSubmit={onLogin}>
+          <label><span>Email</span><input autoFocus type="email" value={credentials.email} onChange={(event) => onCredentialsChange({ ...credentials, email: event.target.value })} placeholder="usuario@ultimoturno.local" /></label>
+          <label><span>Password</span><input type="password" value={credentials.password} onChange={(event) => onCredentialsChange({ ...credentials, password: event.target.value })} placeholder="Password" /></label>
+          <button type="submit" disabled={checking || !credentials.email || !credentials.password}>{checking ? "Ingresando..." : "Ingresar"}</button>
+        </form>
+        <details className="access-key-fallback"><summary>Usar clave general</summary>
+        <form onSubmit={onSubmit}>
         <label>
           <span>Clave</span>
           <input
-            autoFocus
             type="password"
             value={value}
             onChange={(event) => onChange(event.target.value)}
             placeholder="Clave de acceso"
           />
         </label>
-        {error ? <div className="access-error">{error}</div> : null}
         <button type="submit" disabled={checking}>{checking ? "Verificando..." : "Entrar"}</button>
-      </form>
+        </form>
+        </details>
+        {error ? <div className="access-error">{error}</div> : null}
+      </section>
     </main>
   );
 }
@@ -7772,8 +7911,9 @@ function buildApiRequestUrl(path: string) {
   return `${apiBase}/dispatch?path=${encodeURIComponent(requestPath)}`;
 }
 
-async function api<T>(path: string, options: { token?: string; method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+async function api<T>(path: string, options: { token?: string; method?: string; body?: unknown; signal?: AbortSignal; skipSession?: boolean } = {}): Promise<T> {
   const accessKey = getStoredAccessKey();
+  const sessionToken = options.skipSession ? "" : readLocalStorage(adminSessionTokenKey);
   const requestUrl = buildApiRequestUrl(path);
   const method = options.method || "GET";
   const response = await fetch(requestUrl, {
@@ -7781,7 +7921,7 @@ async function api<T>(path: string, options: { token?: string; method?: string; 
     headers: {
       "Content-Type": "application/json",
       ...(accessKey ? { "X-UltimoTurno-Access-Key": accessKey } : {}),
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {})
+      ...(options.token || sessionToken ? { Authorization: `Bearer ${options.token || sessionToken}` } : {})
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
     signal: options.signal
@@ -7798,6 +7938,7 @@ async function api<T>(path: string, options: { token?: string; method?: string; 
 
 function blankForm(): InventoryFormState {
   return {
+    ownerUserId: "",
     purchaseCost: null,
     purchaseCurrency: "ARS",
     sku: "",
@@ -7882,6 +8023,7 @@ function readImportDraft(): { csvText: string; batch: ImportBatchState } {
 function formFromItem(item: StockRow): InventoryFormState {
   const priceCharting = item.product.identifiers.find((identifier) => identifier.source === "pricecharting");
   return {
+    ownerUserId: item.ownerUserId || "",
     purchaseCost: item.purchaseCost ?? null,
     purchaseCurrency: item.purchaseCurrency || "ARS",
     sku: item.sku,

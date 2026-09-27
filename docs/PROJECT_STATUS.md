@@ -1,6 +1,6 @@
 # UltimoTurno - estado actual
 
-Actualizado: 2026-09-26
+Actualizado: 2026-09-27
 
 > Esta seccion reemplaza el estado fechado 2026-09-11 que se conserva mas abajo
 > como referencia historica.
@@ -17,7 +17,29 @@ Actualizado: 2026-09-26
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
   solo de frontend y no modificaron la base de ordenes.
 
-## Trabajo completado del 17 al 26 de septiembre
+## Trabajo completado del 17 al 27 de septiembre
+
+### Usuarios con stock propio
+
+- El inventario ahora admite propietario por unidad/SKU. El stock historico y
+  las cargas sin propietario siguen perteneciendo a `UltimoTurno`; no se
+  mezclan con el stock de usuarios externos aunque sea la misma carta y
+  variante.
+- Se agrego el rol `stock_owner`. Ese usuario inicia sesion en el panel
+  operativo, ve unicamente su inventario, carga nuevas unidades a su nombre y
+  solo puede registrar ventas sobre sus propias existencias.
+- Los administradores ven y venden todo el inventario. Al cargar stock pueden
+  elegir `UltimoTurno` o uno de los propietarios, y en Inventario pueden filtrar
+  y reconocer cada tarjeta por propietario.
+- Administracion incorpora `Usuarios y propietarios` para crear cuentas de tipo
+  administrador o stock propio. La clave general continua disponible como
+  acceso de contingencia.
+- La API aplica el aislamiento aun si se intenta usar una URL manual: limita las
+  rutas del propietario, valida propiedad al editar/vender y guarda el
+  propietario original en cada linea de venta.
+- El flujo es independiente del portal de revendedores en consignacion. Las
+  asignaciones de consignacion siguen compartiendo disponibilidad central;
+  `stock_owner` representa mercaderia realmente separada por dueño.
 
 - El carrito movil ahora ocupa la pantalla disponible, mantiene totales y confirmacion accesibles, desplaza solo la lista de cartas y agrupa las herramientas de exportacion en un desplegable compacto.
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.

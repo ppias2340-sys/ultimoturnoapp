@@ -1,11 +1,30 @@
 # UltimoTurno - proximos pasos
 
-Actualizado: 2026-09-26
+Actualizado: 2026-09-27
 
 > Las prioridades vigentes estan en esta primera seccion. El plan del
 > 2026-09-11 se conserva debajo como referencia historica.
 
 ## Prioridades vigentes
+
+### Pilotear usuarios con stock propio
+
+- Confirmar el primer ingreso de Mayra, Seb y Melo como administradores y de
+  German como propietario de stock; cambiar las claves temporales si se decide
+  una politica distinta de acceso.
+- Cargar una carta existente a nombre de UltimoTurno y otra igual a nombre de
+  German. Deben aparecer como SKUs separados y el filtro de propietario debe
+  distinguirlas.
+- Verificar desde la cuenta de German que solo vea su inventario y que pueda
+  cargar y vender sus unidades. Confirmar desde una cuenta administradora que
+  vea y pueda vender ambas.
+- Mantener separadas las nociones de propietario y revendedor consignado. No
+  migrar asignaciones de consignacion a propiedad salvo decision operativa
+  explicita.
+
+Senal de exito: las unidades de cada dueño conservan cantidades y ventas
+independientes, German no puede operar stock ajeno y cualquier administrador
+puede intervenir sobre todo el inventario.
 
 ### Verificar reparacion prioritaria de imagenes
 

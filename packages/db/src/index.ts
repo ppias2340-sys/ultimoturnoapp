@@ -18,6 +18,8 @@ export type DbStockRow = {
   purchaseCurrency: string;
   id: string;
   businessId: string;
+  ownerUserId: string;
+  ownerName: string;
   sku: string;
   location: string;
   intakeBatch: string;
@@ -209,7 +211,7 @@ export type DbReservationRow = {
   createdAt: string;
 };
 
-export const migrationFiles = ["0001_initial_stock_readonly.sql", "0002_operational_inventory.sql", "0003_operational_commerce.sql", "0004_pricecharting_cache.sql", "0005_pricecharting_image_cache.sql", "0006_claims.sql", "0007_pricecharting_image_url_found.sql", "0008_card_index.sql", "0009_card_index_review.sql", "0010_claim_sessions_allow_reused_names.sql", "0011_claim_sections.sql", "0012_claim_card_quantity.sql", "0013_order_packing_payments.sql", "0014_claim_order_payment_due.sql", "0015_sale_delivered_status.sql", "0016_sales_usd_lines.sql", "0017_sale_notes.sql", "0018_sale_message_sent.sql", "0019_card_variant_grading.sql", "0020_card_variant_grading_cert.sql", "0021_inventory_intake_control.sql", "0022_tcgplayer_price_cache.sql", "0023_mobile_inventory_staging.sql", "0024_inventory_item_tags.sql", "0025_inventory_intake_safety.sql", "0026_order_boards.sql", "0027_language_groups.sql", "0028_refine_language_groups.sql", "0029_recalculate_language_groups.sql", "0030_unified_catalog_cards.sql", "0031_claim_stock_lifecycle.sql", "0032_reseller_consignment.sql", "0033_reseller_orders.sql", "0034_reseller_order_workflow.sql", "0035_tcgplayer_price_fallback.sql", "0036_claim_planner.sql", "0037_fast_catalog_search.sql", "0038_coolstuff_price_cache.sql", "0039_catalog_search_number_index.sql", "0040_reuse_catalog_stock_images.sql", "0041_stock_read_indexes.sql", "0042_stock_read_snapshots.sql", "0043_compress_stock_snapshots.sql"];
+export const migrationFiles = ["0001_initial_stock_readonly.sql", "0002_operational_inventory.sql", "0003_operational_commerce.sql", "0004_pricecharting_cache.sql", "0005_pricecharting_image_cache.sql", "0006_claims.sql", "0007_pricecharting_image_url_found.sql", "0008_card_index.sql", "0009_card_index_review.sql", "0010_claim_sessions_allow_reused_names.sql", "0011_claim_sections.sql", "0012_claim_card_quantity.sql", "0013_order_packing_payments.sql", "0014_claim_order_payment_due.sql", "0015_sale_delivered_status.sql", "0016_sales_usd_lines.sql", "0017_sale_notes.sql", "0018_sale_message_sent.sql", "0019_card_variant_grading.sql", "0020_card_variant_grading_cert.sql", "0021_inventory_intake_control.sql", "0022_tcgplayer_price_cache.sql", "0023_mobile_inventory_staging.sql", "0024_inventory_item_tags.sql", "0025_inventory_intake_safety.sql", "0026_order_boards.sql", "0027_language_groups.sql", "0028_refine_language_groups.sql", "0029_recalculate_language_groups.sql", "0030_unified_catalog_cards.sql", "0031_claim_stock_lifecycle.sql", "0032_reseller_consignment.sql", "0033_reseller_orders.sql", "0034_reseller_order_workflow.sql", "0035_tcgplayer_price_fallback.sql", "0036_claim_planner.sql", "0037_fast_catalog_search.sql", "0038_coolstuff_price_cache.sql", "0039_catalog_search_number_index.sql", "0040_reuse_catalog_stock_images.sql", "0041_stock_read_indexes.sql", "0042_stock_read_snapshots.sql", "0043_compress_stock_snapshots.sql", "0044_inventory_ownership.sql"];
 export const seedFiles = ["0001_demo_seed.sql", "0002_extended_demo_seed.sql"];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -363,9 +365,20 @@ export type AuthenticatedUser = {
   businessId: string;
   displayName: string;
   email: string;
+  roles?: string[];
 };
 
 export type AuthenticatedUserContext = AuthenticatedUser & { roles: string[] };
+
+export type ManagedUser = {
+  id: string;
+  displayName: string;
+  email: string;
+  active: boolean;
+  roles: string[];
+  lastLoginAt?: string;
+  createdAt: string;
+};
 
 export type ResellerAssignment = {
   inventoryItemId: string;
@@ -441,6 +454,9 @@ export type ResellerDashboard = {
 };
 
 export type UpsertInventoryInput = {
+  ownerUserId?: string;
+  productId?: string;
+  variantId?: string;
   mobileEntryId?: string;
   purchaseCost?: number | null;
   purchaseCurrency?: string;
@@ -539,6 +555,7 @@ export type CreateSaleInput = {
 
 export type SaleRecord = {
   id: string;
+  createdByUserId: string;
   customerName: string;
   saleType: "sale" | "reservation";
   status: "pending" | "packed" | "paid" | "delivered" | "cancelled";
@@ -1166,6 +1183,59 @@ export async function getAuthenticatedUserContext(db: PGlite, token: string): Pr
     order by r.name
   `, [user.id, user.businessId]);
   return { ...user, roles: roles.rows.map((row) => row.name) };
+}
+
+export async function listManagedUsers(db: PGlite, businessId: string): Promise<{ users: ManagedUser[] }> {
+  const result = await db.query<Record<string, unknown>>(`
+    select u.id, u.display_name, u.email, u.active, u.last_login_at, u.created_at,
+      coalesce(json_agg(r.name order by r.name) filter (where r.name is not null), '[]'::json) as roles
+    from app_users u
+    left join user_roles ur on ur.user_id = u.id
+    left join roles r on r.id = ur.role_id and r.business_id = u.business_id
+    where u.business_id = $1 and u.display_name <> 'Sistema local'
+    group by u.id
+    order by u.active desc, u.display_name
+  `, [businessId]);
+  return { users: result.rows.map((row) => ({
+    id: String(row.id),
+    displayName: String(row.display_name),
+    email: String(row.email || ""),
+    active: Boolean(row.active),
+    roles: Array.isArray(row.roles) ? row.roles.map(String) : [],
+    lastLoginAt: row.last_login_at ? String(row.last_login_at) : undefined,
+    createdAt: String(row.created_at)
+  })) };
+}
+
+export async function createManagedUser(db: PGlite, input: {
+  displayName: string;
+  email: string;
+  password: string;
+  role: "admin" | "stock_owner";
+}, actor: AuthenticatedUser): Promise<ManagedUser> {
+  const displayName = input.displayName.trim();
+  const email = input.email.trim().toLowerCase();
+  if (!displayName) throw new Error("El nombre es obligatorio.");
+  if (!email || !email.includes("@")) throw new Error("Ingresa un email valido.");
+  if (input.password.length < 10) throw new Error("La password debe tener al menos 10 caracteres.");
+  if (!(["admin", "stock_owner"] as const).includes(input.role)) throw new Error("Rol invalido.");
+  const userId = crypto.randomUUID();
+  await db.transaction(async (tx) => {
+    const connection = tx as unknown as PGlite;
+    const existing = await tx.query("select id from app_users where business_id = $1 and lower(email) = lower($2)", [actor.businessId, email]);
+    if (existing.rows[0]) throw new Error("Ya existe un usuario con ese email.");
+    const role = await tx.query<{ id: string }>("select id from roles where business_id = $1 and name = $2 limit 1", [actor.businessId, input.role]);
+    if (!role.rows[0]) throw new Error("El rol solicitado no existe.");
+    await tx.query(`
+      insert into app_users (id, business_id, display_name, email, password_hash, active)
+      values ($1, $2, $3, $4, $5, true)
+    `, [userId, actor.businessId, displayName, email, hashPassword(input.password)]);
+    await tx.query("insert into user_roles (user_id, role_id) values ($1, $2)", [userId, role.rows[0].id]);
+    await writeAudit(connection, actor, "user.create", "app_user", userId, null, { displayName, email, role: input.role });
+  });
+  const created = (await listManagedUsers(db, actor.businessId)).users.find((user) => user.id === userId);
+  if (!created) throw new Error("No se pudo leer el usuario creado.");
+  return created;
 }
 
 export async function createReseller(db: PGlite, input: {
@@ -3629,6 +3699,8 @@ export async function listStock(db: PGlite): Promise<{ summary: DbStockSummary; 
     select
       ii.id,
       ii.business_id,
+      ii.owner_user_id,
+      coalesce(owner_user.display_name, 'UltimoTurno') as owner_name,
       ii.sku,
       ii.location,
       ii.intake_batch,
@@ -3670,6 +3742,7 @@ export async function listStock(db: PGlite): Promise<{ summary: DbStockSummary; 
       v.grading_cert,
       coalesce(identifier_data.identifiers, '[]'::json) as identifiers
     from inventory_items ii
+    left join app_users owner_user on owner_user.id = ii.owner_user_id and owner_user.business_id = ii.business_id
     join card_products p on p.id = ii.product_id
     join card_variants v on v.id = ii.variant_id
     left join current_prices cp on cp.inventory_item_id = ii.id
@@ -3778,6 +3851,13 @@ export async function listStockForBusiness(db: PGlite, businessId: string): Prom
   const previousBusinessId = demoBusinessId;
   void previousBusinessId;
   return listStockInternal(db, businessId);
+}
+
+export async function listStockForActor(db: PGlite, actor: AuthenticatedUser): Promise<{ summary: DbStockSummary; items: DbStockRow[] }> {
+  const stock = await listStockInternal(db, actor.businessId);
+  if (!actor.roles?.includes("stock_owner") || actor.roles.includes("admin")) return stock;
+  const items = stock.items.filter((item) => item.ownerUserId === actor.id);
+  return { summary: summarizeDbStock(items), items };
 }
 
 function inventoryReferencePrice(item: DbStockRow): { usd: number; source: "pricecharting" | "tcgplayer"; label: string } | null {
@@ -3901,6 +3981,8 @@ async function listStockInternal(db: PGlite, businessId: string): Promise<{ summ
     select
       ii.id,
       ii.business_id,
+      ii.owner_user_id,
+      coalesce(owner_user.display_name, 'UltimoTurno') as owner_name,
       ii.sku,
       ii.location,
       ii.intake_batch,
@@ -3942,6 +4024,7 @@ async function listStockInternal(db: PGlite, businessId: string): Promise<{ summ
       v.grading_cert,
       coalesce(identifier_data.identifiers, '[]'::json) as identifiers
     from inventory_items ii
+    left join app_users owner_user on owner_user.id = ii.owner_user_id and owner_user.business_id = ii.business_id
     join card_products p on p.id = ii.product_id
     join card_variants v on v.id = ii.variant_id
     left join current_prices cp on cp.inventory_item_id = ii.id
@@ -4265,16 +4348,23 @@ export async function addInventoryStock(db: PGlite, input: UpsertInventoryInput,
   return inventoryTransaction(db, async (connection) => {
     if (!Number.isInteger(input.quantityOnHand) || input.quantityOnHand <= 0) throw new Error("Indica una cantidad mayor a cero.");
     const stock = await listStockForBusiness(connection, actor.businessId);
+    const canManageAll = !actor.roles || actor.roles.includes("admin");
+    const ownerUserId = canManageAll ? input.ownerUserId?.trim() || "" : actor.id;
     const same = (a: unknown, b: unknown) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
-    const existing = stock.items.find((item) =>
+    const identityMatches = (item: DbStockRow) =>
       same(item.product.name, input.name) && same(item.product.expansion, input.expansion) && same(item.product.number, input.number)
       && same(item.variant.language, input.language) && same(item.variant.condition, input.gradingCompany || input.grade ? "GRADED" : input.condition)
       && same(item.variant.finish, input.finish) && same(item.variant.gradingCompany, input.gradingCompany)
       && same(item.variant.grade, input.grade) && same(item.variant.gradingCert, input.gradingCert)
-      && (!input.location || same(item.location, input.location)));
+      && (!input.location || same(item.location, input.location));
+    const existing = stock.items.find((item) => identityMatches(item) && item.ownerUserId === ownerUserId);
+    const template = existing || stock.items.find(identityMatches);
     const existingNotes = existing ? await connection.query<{ notes: string }>("select notes from card_products where id = $1 and business_id = $2", [existing.product.id, actor.businessId]) : null;
     return upsertInventoryItem(connection, {
       ...input,
+      ownerUserId,
+      productId: existing ? undefined : template?.product.id,
+      variantId: existing ? undefined : template?.variant.id,
       sku: existing?.sku || `INTAKE-${crypto.randomUUID()}`,
       quantityOnHand: (existing?.quantityOnHand || 0) + input.quantityOnHand,
       quantityReserved: existing?.quantityReserved || 0,
@@ -4297,8 +4387,21 @@ export async function upsertInventoryItem(
   if (!inventoryTransactions.has(db)) return inventoryTransaction(db, (connection) => upsertInventoryItem(connection, input, actor));
   validateInventoryInput(input);
   const before = await findStockBySku(db, actor.businessId, input.sku?.trim() || buildSku(input));
-  const productId = before?.product.id || crypto.randomUUID();
-  const variantId = before?.variant.id || crypto.randomUUID();
+  const canManageAll = !actor.roles || actor.roles.includes("admin");
+  if (!canManageAll && before && before.ownerUserId !== actor.id) throw new Error("No podes modificar stock de otro propietario.");
+  const ownerUserId = canManageAll ? input.ownerUserId?.trim() || "" : actor.id;
+  if (ownerUserId) {
+    const owner = await db.query(`
+      select 1 from app_users u
+      join user_roles ur on ur.user_id = u.id
+      join roles r on r.id = ur.role_id
+      where u.id = $1 and u.business_id = $2 and u.active = true and r.name = 'stock_owner'
+      limit 1
+    `, [ownerUserId, actor.businessId]);
+    if (!owner.rows[0]) throw new Error("El propietario de stock no existe o no esta activo.");
+  }
+  const productId = before?.product.id || input.productId || crypto.randomUUID();
+  const variantId = before?.variant.id || input.variantId || crypto.randomUUID();
   const itemId = before?.id || crypto.randomUUID();
   const sku = input.sku?.trim() || buildSku(input);
   const gradingCompany = input.gradingCompany?.trim().toUpperCase() || null;
@@ -4327,22 +4430,22 @@ export async function upsertInventoryItem(
       `, [input.language.trim(), condition, finish, gradingCompany, grade, gradingCert, variantId, actor.businessId]);
       await db.query(`
         update inventory_items
-        set sku = $1, location = $2, intake_batch = $3, inventory_status = $4, tags = $5, quantity_on_hand = $6, quantity_reserved = $7, active = true, updated_at = now()
-        where id = $8 and business_id = $9
-      `, [sku, input.location || "", intakeBatch, inventoryStatus, tags, input.quantityOnHand, input.quantityReserved || 0, itemId, actor.businessId]);
+        set sku = $1, location = $2, intake_batch = $3, inventory_status = $4, tags = $5, quantity_on_hand = $6, quantity_reserved = $7, owner_user_id = $8, active = true, updated_at = now()
+        where id = $9 and business_id = $10
+      `, [sku, input.location || "", intakeBatch, inventoryStatus, tags, input.quantityOnHand, input.quantityReserved || 0, ownerUserId || null, itemId, actor.businessId]);
     } else {
-      await db.query(`
+      if (!input.productId) await db.query(`
         insert into card_products (id, business_id, name, expansion, card_number, image_url, notes)
         values ($1, $2, $3, $4, $5, $6, $7)
       `, [productId, actor.businessId, input.name.trim(), input.expansion.trim(), input.number || null, input.imageUrl || null, input.notes || ""]);
-      await db.query(`
+      if (!input.variantId) await db.query(`
         insert into card_variants (id, business_id, product_id, language, condition, finish, grading_company, grade, grading_cert)
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `, [variantId, actor.businessId, productId, input.language.trim(), condition, finish, gradingCompany, grade, gradingCert]);
       await db.query(`
-        insert into inventory_items (id, business_id, sku, product_id, variant_id, location, intake_batch, inventory_status, tags, quantity_on_hand, quantity_reserved, active)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
-      `, [itemId, actor.businessId, sku, productId, variantId, input.location || "", intakeBatch, inventoryStatus, tags, input.quantityOnHand, input.quantityReserved || 0]);
+        insert into inventory_items (id, business_id, owner_user_id, sku, product_id, variant_id, location, intake_batch, inventory_status, tags, quantity_on_hand, quantity_reserved, active)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
+      `, [itemId, actor.businessId, ownerUserId || null, sku, productId, variantId, input.location || "", intakeBatch, inventoryStatus, tags, input.quantityOnHand, input.quantityReserved || 0]);
     }
 
     if (quantityDelta !== 0) {
@@ -4535,7 +4638,7 @@ export async function resetInventoryStock(db: PGlite, actor: AuthenticatedUser):
 
 export async function listSales(db: PGlite, businessId = demoBusinessId): Promise<{ sales: SaleRecord[] }> {
   const result = await db.query<Record<string, unknown>>(`
-    select s.id, s.customer_name, s.sale_type, s.status, s.channel, s.total_ars, s.total_usd, s.amount_paid_ars, s.payment_due_at, s.internal_note, s.message_sent_at,
+    select s.id, s.created_by, s.customer_name, s.sale_type, s.status, s.channel, s.total_ars, s.total_usd, s.amount_paid_ars, s.payment_due_at, s.internal_note, s.message_sent_at,
       s.created_at, s.completed_at, si.id as sale_item_id, si.inventory_item_id, si.quantity,
       si.unit_price_ars, si.unit_price_usd, si.line_total_ars, si.line_total_usd, si.price_currency, si.packed_at, ii.sku, p.name,
       coalesce(
@@ -4564,6 +4667,7 @@ export async function listSales(db: PGlite, businessId = demoBusinessId): Promis
     const id = String(row.id);
     const record = records.get(id) || {
       id,
+      createdByUserId: String(row.created_by || ""),
       customerName: String(row.customer_name || ""),
       saleType: String(row.sale_type) as SaleRecord["saleType"],
       status: String(row.status) as SaleRecord["status"],
@@ -4600,6 +4704,12 @@ export async function listSales(db: PGlite, businessId = demoBusinessId): Promis
   return { sales: [...records.values()] };
 }
 
+export async function listSalesForActor(db: PGlite, actor: AuthenticatedUser): Promise<{ sales: SaleRecord[] }> {
+  const sales = await listSales(db, actor.businessId);
+  if (!actor.roles?.includes("stock_owner") || actor.roles.includes("admin")) return sales;
+  return { sales: sales.sales.filter((sale) => sale.createdByUserId === actor.id) };
+}
+
 function stockDisplayName(item: DbStockRow): string {
   const grading = [item.variant.gradingCompany, item.variant.grade].filter(Boolean).join(" ");
   const rawVariant = [item.variant.language, item.variant.condition === "GRADED" ? "" : item.variant.condition].filter(Boolean).join(" / ");
@@ -4622,9 +4732,11 @@ export async function createSale(db: PGlite, input: CreateSaleInput, actor: Auth
   const status = input.saleType === "reservation" ? "pending" : "paid";
   let totalArs = 0;
   const stockById = new Map<string, DbStockRow>();
+  const canManageAll = !actor.roles || actor.roles.includes("admin");
   for (const line of lines) {
     const item = await getInventoryItem(db, line.inventoryItemId, actor.businessId);
     if (!item) throw new Error("Una carta del carrito ya no existe");
+    if (!canManageAll && item.ownerUserId !== actor.id) throw new Error(`${item.product.name}: pertenece a otro propietario.`);
     if (line.quantity > item.availableQuantity) throw new Error(`${item.product.name}: solo quedan ${item.availableQuantity} unidades disponibles`);
     stockById.set(item.id, item);
     totalArs += line.quantity * line.unitPriceArs;
@@ -4640,9 +4752,9 @@ export async function createSale(db: PGlite, input: CreateSaleInput, actor: Auth
     for (const line of lines) {
       const item = stockById.get(line.inventoryItemId)!;
       await db.query(`
-        insert into sale_items (id, business_id, sale_id, inventory_item_id, quantity, unit_price_ars, line_total_ars, display_name, sku_snapshot)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      `, [crypto.randomUUID(), actor.businessId, saleId, line.inventoryItemId, line.quantity, line.unitPriceArs, line.quantity * line.unitPriceArs, stockDisplayName(item), item.sku]);
+        insert into sale_items (id, business_id, sale_id, inventory_item_id, owner_user_id, quantity, unit_price_ars, line_total_ars, display_name, sku_snapshot)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `, [crypto.randomUUID(), actor.businessId, saleId, line.inventoryItemId, item.ownerUserId || null, line.quantity, line.unitPriceArs, line.quantity * line.unitPriceArs, stockDisplayName(item), item.sku]);
 
       if (input.saleType === "reservation") {
         await db.query("update inventory_items set quantity_reserved = quantity_reserved + $1, updated_at = now() where id = $2 and business_id = $3", [line.quantity, line.inventoryItemId, actor.businessId]);
@@ -6691,6 +6803,8 @@ function toStockRow(row: Record<string, unknown>): DbStockRow {
     purchaseCurrency: String(row.purchase_currency || "ARS"),
     id: String(row.id),
     businessId: String(row.business_id),
+    ownerUserId: String(row.owner_user_id || ""),
+    ownerName: String(row.owner_name || "UltimoTurno"),
     sku: String(row.sku),
     location: String(row.location || ""),
     intakeBatch: String(row.intake_batch || ""),
@@ -7166,6 +7280,10 @@ async function ensureOperationalBootstrap(db: PGlite, options: OperationalDataba
   const resellerRole = await db.query<{ id: string }>("select id from roles where business_id = $1 and name = 'reseller' limit 1", [businessId]);
   if (!resellerRole.rows[0]) {
     await db.query("insert into roles (id, business_id, name, description) values ($1, $2, 'reseller', 'Revendedor en consignacion')", [crypto.randomUUID(), businessId]);
+  }
+  const stockOwnerRole = await db.query<{ id: string }>("select id from roles where business_id = $1 and name = 'stock_owner' limit 1", [businessId]);
+  if (!stockOwnerRole.rows[0]) {
+    await db.query("insert into roles (id, business_id, name, description) values ($1, $2, 'stock_owner', 'Usuario con inventario propio')", [crypto.randomUUID(), businessId]);
   }
   const systemUser = await db.query<{ id: string }>("select id from app_users where business_id = $1 and display_name = 'Sistema local' limit 1", [businessId]);
   if (!systemUser.rows[0]) {

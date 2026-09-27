@@ -27,6 +27,7 @@ import {
   createClaimSection,
   createPurchase,
   createSale,
+  createManagedUser,
   createReseller,
   createResellerOrder,
   createResellerSale,
@@ -67,8 +68,11 @@ import {
   listPriceChartingCache,
   listUnifiedCatalogCards,
   listSales,
+  listSalesForActor,
   listResellers,
   listStockForBusiness,
+  listStockForActor,
+  listManagedUsers,
   listStockImageReview,
   listPriceChartingImageCatalog,
   previewInventorySnapshot,
@@ -3154,6 +3158,14 @@ function requestHasCronAccess(request: IncomingMessage) {
   return requestHasAccess(request);
 }
 
+function stockOwnerRouteAllowed(pathname: string, method = "GET") {
+  if (method === "GET" && ["/auth/me", "/health", "/exchange-rate/blue", "/stock", "/sales", "/catalog-cards", "/pricecharting-cache"].includes(pathname)) return true;
+  if (method === "POST" && ["/inventory/intake", "/sales"].includes(pathname)) return true;
+  if (method === "PUT" && /^\/inventory\/[^/]+$/.test(pathname)) return true;
+  if (method === "POST" && /^\/inventory\/[^/]+\/image\/force$/.test(pathname)) return true;
+  return false;
+}
+
 function normalizeDispatchTarget(url: URL) {
   const targetPath = url.searchParams.get("path") || "/";
   if (!targetPath.startsWith("/") || targetPath.startsWith("//")) return "/";
@@ -3961,6 +3973,27 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       return;
     }
 
+    if (url.pathname === "/auth/login" && request.method === "POST") {
+      const body = await readJson<{ email?: string; password?: string }>(request);
+      const db = await dbPromise;
+      const session = await loginUser(db, body.email?.trim() || "", body.password || "");
+      const context = await getAuthenticatedUserContext(db, session.token);
+      if (!context || !context.roles.some((role) => role === "admin" || role === "stock_owner")) {
+        await logoutUser(db, session.token);
+        sendJson(response, 403, { ok: false, error: "Este usuario no tiene acceso al panel operativo." });
+        return;
+      }
+      sendJson(response, 200, { token: session.token, user: context });
+      return;
+    }
+
+    if (url.pathname === "/auth/logout" && request.method === "POST") {
+      const db = await dbPromise;
+      await logoutUser(db, bearerToken(request));
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
     if (url.pathname === "/reseller/portal" && request.method === "GET") {
       const db = await dbPromise;
       const reseller = await requireResellerUser(request);
@@ -4009,8 +4042,18 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       return;
     }
 
-    if (!requestHasAccess(request)) {
+    const db = await dbPromise;
+    const sessionUser = bearerToken(request) ? await getAuthenticatedUserContext(db, bearerToken(request)) : null;
+    if (!requestHasAccess(request) && !sessionUser) {
       sendJson(response, 401, { ok: false, error: "Clave de acceso requerida o incorrecta." });
+      return;
+    }
+    if (sessionUser && !sessionUser.roles.includes("admin") && !sessionUser.roles.includes("stock_owner")) {
+      sendJson(response, 403, { ok: false, error: "Este usuario no tiene acceso al panel operativo." });
+      return;
+    }
+    if (sessionUser?.roles.includes("stock_owner") && !sessionUser.roles.includes("admin") && !stockOwnerRouteAllowed(url.pathname, request.method || "GET")) {
+      sendJson(response, 403, { ok: false, error: "Esta seccion requiere permisos de administrador." });
       return;
     }
 
@@ -4025,7 +4068,6 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
         sendBuffer(response, 200, cached.body, cached.contentType, request.method === "HEAD");
         return;
       }
-      const db = await dbPromise;
       const repaired = await fetchAndCacheMissingPriceChartingImage(db, fileName);
       if (repaired) {
         sendBuffer(response, 200, repaired.body, repaired.contentType, request.method === "HEAD");
@@ -4034,8 +4076,6 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       sendJson(response, 404, { ok: false, error: "Imagen no encontrada." });
       return;
     }
-
-    const db = await dbPromise;
 
     if (url.pathname === "/health") {
       sendJson(response, 200, { ...(await getHealth(db)), environment: { runtimeEnv, dbDriver, databaseUrlConfigured: Boolean(databaseUrl), allowDatabaseSsl: databaseSslEnabled, dataProfile, allowExamples, dataDir, priceChartingImageDir, priceChartingImageReadDirs, allowedOrigins } });
@@ -4047,7 +4087,20 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       return;
     }
 
-    const user = await operationalUser();
+    const user: AuthenticatedUser = sessionUser || { ...(await operationalUser()), roles: ["admin"] };
+
+    if (url.pathname === "/users" && request.method === "GET") {
+      if (!user.roles?.includes("admin")) throw Object.assign(new Error("Se requiere rol administrador."), { statusCode: 403 });
+      sendJson(response, 200, await listManagedUsers(db, user.businessId));
+      return;
+    }
+
+    if (url.pathname === "/users" && request.method === "POST") {
+      if (!user.roles?.includes("admin")) throw Object.assign(new Error("Se requiere rol administrador."), { statusCode: 403 });
+      const body = await readJson<{ displayName: string; email: string; password: string; role: "admin" | "stock_owner" }>(request);
+      sendJson(response, 201, { user: await createManagedUser(db, body, user) });
+      return;
+    }
 
     if (url.pathname === "/resellers" && request.method === "GET") {
       sendJson(response, 200, await listResellers(db, user.businessId));
@@ -4094,12 +4147,12 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
     }
 
     if (url.pathname === "/auth/me") {
-      sendJson(response, 200, { user, environment: { dataProfile, allowExamples } });
+      sendJson(response, 200, { user, roles: user.roles || ["admin"], environment: { dataProfile, allowExamples } });
       return;
     }
 
     if (url.pathname === "/stock" && request.method === "GET") {
-      sendJson(response, 200, await readStockForRequest(db, user.businessId));
+      sendJson(response, 200, user.roles?.includes("stock_owner") && !user.roles.includes("admin") ? await listStockForActor(db, user) : await readStockForRequest(db, user.businessId));
       return;
     }
 
@@ -4184,7 +4237,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
     if (url.pathname === "/inventory/intake" && request.method === "POST") {
       const body = await readJson<UpsertInventoryInput>(request);
-      sendJson(response, 200, { item: await addInventoryStock(db, body, user) });
+      sendJson(response, 200, { item: await addInventoryStock(db, { ...body, ownerUserId: user.roles?.includes("admin") ? body.ownerUserId : user.id }, user) });
       return;
     }
 
@@ -4274,7 +4327,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       return;
     }
     if (url.pathname === "/sales" && request.method === "GET") {
-      sendJson(response, 200, await listSales(db, user.businessId));
+      sendJson(response, 200, await listSalesForActor(db, user));
       return;
     }
 
