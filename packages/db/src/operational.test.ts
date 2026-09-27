@@ -145,6 +145,44 @@ describe("operational inventory database", () => {
     await db.close();
   });
 
+  it("keeps concurrent claim card edits isolated", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-claim-concurrent-edit-"));
+    const db = await createOperationalDatabase({ dataDir });
+    const user = await getDefaultOperationalUser(db);
+    await replacePriceChartingCache(db, {
+      category: "pokemon-cards",
+      sourceHash: "claim-concurrent-edit-test",
+      rowsReceived: 1,
+      rowsSkipped: 0,
+      rows: [{
+        priceChartingId: "claim-concurrent-1",
+        canonicalUrl: "https://www.pricecharting.com/game/pokemon-promo/test-card-1",
+        sourceUrl: "https://www.pricecharting.com/game/pokemon-promo/test-card-1",
+        productName: "Concurrent Claim Card",
+        normalizedName: "concurrent claim card",
+        expansionName: "Promo",
+        normalizedExpansion: "promo",
+        cardNumber: "1",
+        loosePriceUsd: 2,
+        imageUrl: "",
+        searchKey: "concurrent claim card promo 1"
+      }]
+    });
+    await createClaimSession(db, { name: "Concurrent edits" }, user);
+    const workspace = await addPriceChartingCardsToClaim(db, ["claim-concurrent-1"], user);
+    const cardId = workspace.cards[0].id;
+
+    await Promise.all([
+      updateClaimCard(db, cardId, { finalPriceArs: 13000 }, user),
+      updateClaimCard(db, cardId, { buyer: "Cliente concurrente" }, user)
+    ]);
+
+    const updated = (await listClaimsWorkspace(db, user.businessId)).cards[0];
+    assert.equal(updated.finalPriceArs, 13000);
+    assert.equal(updated.buyer, "Cliente concurrente");
+    await db.close();
+  });
+
   it("persists products and inventory adjustments across reopen", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-operational-"));
     const options = {

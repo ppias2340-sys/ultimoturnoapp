@@ -21,6 +21,7 @@ Actualizado: 2026-09-26
 
 - El carrito movil ahora ocupa la pantalla disponible, mantiene totales y confirmacion accesibles, desplaza solo la lista de cartas y agrupa las herramientas de exportacion en un desplegable compacto.
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.
+- La edicion manual de cartas del claim usa transacciones aisladas por solicitud. Cambiar precio, comprador, cantidad o tags en paralelo ya no comparte el estado `BEGIN/COMMIT` de otra operacion ni devuelve `Ya hay una transaccion manual activa`.
 
 ### Navegacion y sincronizacion
 

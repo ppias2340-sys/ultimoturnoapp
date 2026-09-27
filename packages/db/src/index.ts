@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { PGlite } from "@electric-sql/pglite";
 import { parse } from "csv-parse/sync";
 
@@ -237,7 +238,7 @@ const pgModule = require("pg") as PgModule;
 
 class PostgresOperationalDatabase {
   private readonly pool: PgPoolLike;
-  private manualTransactionClient: PgClientLike | null = null;
+  private readonly manualTransactionClient = new AsyncLocalStorage<PgClientLike | undefined>();
 
   constructor(options: { databaseUrl: string; ssl?: boolean; poolMax?: number }) {
     const { Pool, types } = pgModule;
@@ -256,24 +257,30 @@ class PostgresOperationalDatabase {
   }
 
   async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryLikeResult<T>> {
-    return (this.manualTransactionClient || this.pool).query<T>(sql, params);
+    return (this.manualTransactionClient.getStore() || this.pool).query<T>(sql, params);
   }
 
   async exec(sql: string): Promise<void> {
     const command = sql.trim().replace(/;+$/, "").toLowerCase();
     if (command === "begin") {
-      if (this.manualTransactionClient) throw new Error("Ya hay una transaccion manual activa.");
-      this.manualTransactionClient = await this.pool.connect();
-      await this.manualTransactionClient.query("begin");
+      if (this.manualTransactionClient.getStore()) throw new Error("Ya hay una transaccion manual activa.");
+      const client = await this.pool.connect();
+      try {
+        await client.query("begin");
+      } catch (error) {
+        client.release?.();
+        throw error;
+      }
+      this.manualTransactionClient.enterWith(client);
       return;
     }
     if (command === "commit" || command === "rollback") {
-      const client = this.manualTransactionClient;
+      const client = this.manualTransactionClient.getStore();
       if (!client) throw new Error(`No hay una transaccion manual activa para ${command}.`);
       try {
         await client.query(command);
       } finally {
-        this.manualTransactionClient = null;
+        this.manualTransactionClient.enterWith(undefined);
         client.release?.();
       }
       return;
@@ -5597,9 +5604,9 @@ export async function updateClaimCard(db: PGlite, cardId: string, input: ClaimCa
   const sectionId = input.sectionId === undefined
     ? undefined
     : await normalizeClaimSectionId(db, String(before.rows[0].claim_id || ""), actor.businessId, input.sectionId);
-  await db.exec("begin");
-  try {
-    await db.query(`
+  await db.transaction(async (tx) => {
+    const connection = tx as unknown as PGlite;
+    await connection.query(`
       update claim_cards set
         section_id = case when $1::text is null then section_id else nullif($1, '')::uuid end,
         final_price_ars = coalesce($2, final_price_ars),
@@ -5625,10 +5632,10 @@ export async function updateClaimCard(db: PGlite, cardId: string, input: ClaimCa
       cardId,
       actor.businessId
     ]);
-    await syncClaimCardStock(db, cardId, actor);
+    await syncClaimCardStock(connection, cardId, actor);
     if (input.imageUrl !== undefined) {
       const imageUrl = input.imageUrl.trim();
-      await db.query(`
+      await connection.query(`
         update card_products cp
         set image_url = $1,
             updated_at = now()
@@ -5641,12 +5648,8 @@ export async function updateClaimCard(db: PGlite, cardId: string, input: ClaimCa
           and ei.external_id = (select pricecharting_id from claim_cards where id = $3 and business_id = $2)
       `, [imageUrl, actor.businessId, cardId]);
     }
-    await writeAudit(db, actor, "claim.card.update", "claim_card", cardId, before.rows[0], input);
-    await db.exec("commit");
-  } catch (error) {
-    await db.exec("rollback");
-    throw error;
-  }
+    await writeAudit(connection, actor, "claim.card.update", "claim_card", cardId, before.rows[0], input);
+  });
   return listClaimsWorkspace(db, actor.businessId);
 }
 
