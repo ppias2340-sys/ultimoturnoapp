@@ -11,7 +11,7 @@ Actualizado: 2026-09-28
 - Produccion: `https://ultimoturnoapp-api.vercel.app/`.
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
-- Ultimo commit funcional enviado a produccion: `542a2c7`.
+- Ultimo commit funcional enviado a produccion: `b117d8a`.
 - El claim activo de produccion contiene datos reales: no eliminarlo, cancelarlo
   ni recrearlo durante verificaciones.
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
@@ -72,6 +72,7 @@ Actualizado: 2026-09-28
 - La edicion manual de cartas del claim usa la API transaccional aislada del driver. Cambiar precio, comprador, cantidad o tags en paralelo ya no abre un `BEGIN/COMMIT` manual compartido ni devuelve `Ya hay una transaccion manual activa`.
 - La carga de stock consulta automaticamente el precio CoolStuff exacto por carta, condicion y acabado. Cuando existe en la cache muestra USD, conversion recomendada a ARS y permite aplicarlo sin reescribir valores; cuando aun no fue relevado ofrece la busqueda oficial ya completada. La consulta esta habilitada tambien para usuarios `stock_owner`.
 - Las ordenes pendientes o a embalar permiten editar sus cartas desde el mismo detalle: agregar stock disponible, quitar lineas, cambiar cantidades y precios ARS/USD o marcar una carta gratis. El servidor recalcula totales y reservas en una unica transaccion, bloquea ediciones de ventas ya pagadas y evita que dos operaciones tomen la misma ultima unidad.
+- Ordenes permite ordenar cada columna del tablero y la vista de lista por mayor/menor importe o por mayor/menor cantidad de cartas. El importe combina ARS con los USD convertidos al blue vigente y el orden es solo visual: no reescribe la posicion manual de las tarjetas.
 - `Cerrar claim` sincroniza stock, crea las ordenes, reserva sus cartas y marca el claim cerrado dentro de una unica transaccion aislada. El servidor bloquea el claim durante el cierre para impedir ordenes duplicadas y la interfaz deshabilita el boton con estado `Cerrando...` mientras espera la respuesta.
 - Si una carta del claim ya existe pero no tiene disponibilidad suficiente al cerrar, el sistema usa primero las unidades libres y crea automaticamente solo el faltante sobre el mismo SKU antes de reservarlo. El ingreso queda registrado como movimiento `claim_stock_in`; el cierre ya no falla por stock agotado.
 
