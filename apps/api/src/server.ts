@@ -78,6 +78,7 @@ import {
   previewInventorySnapshot,
   previewInventorySalePriceRepair,
   previewActiveClaimOrders,
+  reconcileActiveClaimStock,
   publishClaimPlan,
   markSalePacked,
   markSaleDelivered,
@@ -4595,6 +4596,11 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
     if (url.pathname === "/claims/orders/preview" && request.method === "GET") {
       sendJson(response, 200, await previewActiveClaimOrders(db, user));
+      return;
+    }
+
+    if (url.pathname === "/claims/stock/reconcile" && request.method === "POST") {
+      sendJson(response, 200, await reconcileActiveClaimStock(db, user));
       return;
     }
 

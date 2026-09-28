@@ -34,6 +34,7 @@ import {
   listStockForBusiness,
   listSales,
   previewActiveClaimOrders,
+  reconcileActiveClaimStock,
   previewInventorySalePriceRepair,
   previewInventorySnapshot,
   publishClaimPlan,
@@ -142,6 +143,127 @@ describe("operational inventory database", () => {
     await updateClaimCard(db, published.workspace.cards[0].id, { quantity: 1 }, user);
     stock = await listStockForBusiness(db, user.businessId);
     assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 3);
+    await db.close();
+  });
+
+  it("reuses existing claim stock, reserves it for the order and sells it only when paid", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-claim-existing-stock-"));
+    const db = await createOperationalDatabase({ dataDir });
+    const user = await getDefaultOperationalUser(db);
+    await replacePriceChartingCache(db, {
+      category: "pokemon-cards",
+      sourceHash: "claim-existing-stock-test",
+      rowsReceived: 1,
+      rowsSkipped: 0,
+      rows: [{
+        priceChartingId: "claim-existing-25",
+        canonicalUrl: "https://www.pricecharting.com/game/pokemon-test/existing-card-25",
+        sourceUrl: "https://www.pricecharting.com/game/pokemon-test/existing-card-25",
+        productName: "Existing Claim Card",
+        normalizedName: "existing claim card",
+        expansionName: "Claim Test",
+        normalizedExpansion: "claim test",
+        cardNumber: "25",
+        loosePriceUsd: 4,
+        imageUrl: "",
+        searchKey: "existing claim card claim test 25"
+      }]
+    });
+    const item = await upsertInventoryItem(db, {
+      sku: "CLAIM-EXISTING-25",
+      name: "Existing Claim Card",
+      expansion: "Claim Test",
+      number: "25",
+      language: "EN",
+      condition: "NM",
+      finish: "normal",
+      quantityOnHand: 2,
+      quantityReserved: 0,
+      priceArs: 6000,
+      priceChartingId: "claim-existing-25",
+      priceChartingUrl: "https://www.pricecharting.com/game/pokemon-test/existing-card-25"
+    }, user);
+    await createClaimSession(db, { name: "Claim stock existente" }, user);
+    let workspace = await addPriceChartingCardsToClaim(db, ["claim-existing-25"], user);
+    let stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 0);
+
+    await db.query("update inventory_items set quantity_on_hand = 3 where id = $1", [item.id]);
+    await db.query("update claim_cards set stock_origin = 'claim_added', stocked_quantity = 1 where id = $1", [workspace.cards[0].id]);
+    const reconciled = await reconcileActiveClaimStock(db, user);
+    assert.equal(reconciled.reconciledCards, 1);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
+    const reconciledState = await db.query<{ stock_origin: string; stocked_quantity: number }>(
+      "select stock_origin, stocked_quantity from claim_cards where id = $1",
+      [workspace.cards[0].id]
+    );
+    assert.equal(reconciledState.rows[0]?.stock_origin, "existing");
+    assert.equal(Number(reconciledState.rows[0]?.stocked_quantity || 0), 0);
+
+    await updateClaimCard(db, workspace.cards[0].id, { buyer: "Cliente stock", finalPriceArs: 6000 }, user);
+    await closeActiveClaim(db, user);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 1);
+
+    const sale = (await listSales(db, user.businessId)).sales.find((row) => row.customerName === "Cliente stock");
+    assert.ok(sale);
+    await completeReservationSale(db, sale.id, user);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 1);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 0);
+    await db.close();
+  });
+
+  it("creates stock only for claim cards that did not exist", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-claim-new-stock-"));
+    const db = await createOperationalDatabase({ dataDir });
+    const user = await getDefaultOperationalUser(db);
+    await replacePriceChartingCache(db, {
+      category: "pokemon-cards",
+      sourceHash: "claim-new-stock-test",
+      rowsReceived: 1,
+      rowsSkipped: 0,
+      rows: [{
+        priceChartingId: "claim-new-99",
+        canonicalUrl: "https://www.pricecharting.com/game/pokemon-test/new-card-99",
+        sourceUrl: "https://www.pricecharting.com/game/pokemon-test/new-card-99",
+        productName: "New Claim Card",
+        normalizedName: "new claim card",
+        expansionName: "Claim Test",
+        normalizedExpansion: "claim test",
+        cardNumber: "99",
+        loosePriceUsd: 5,
+        imageUrl: "",
+        searchKey: "new claim card claim test 99"
+      }]
+    });
+    await createClaimSession(db, { name: "Claim stock nuevo" }, user);
+    const workspace = await addPriceChartingCardsToClaim(db, ["claim-new-99"], user);
+    let stock = await listStockForBusiness(db, user.businessId);
+    const item = stock.items.find((row) => row.product.name === "New Claim Card");
+    assert.ok(item);
+    assert.equal(item.quantityOnHand, 1);
+    assert.equal(item.quantityReserved, 0);
+
+    const reconciled = await reconcileActiveClaimStock(db, user);
+    assert.equal(reconciled.reconciledCards, 1);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 1);
+
+    await updateClaimCard(db, workspace.cards[0].id, { buyer: "Cliente nuevo", finalPriceArs: 7500 }, user);
+    await closeActiveClaim(db, user);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 1);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 1);
+    const sale = (await listSales(db, user.businessId)).sales.find((row) => row.customerName === "Cliente nuevo");
+    assert.ok(sale);
+    await completeReservationSale(db, sale.id, user);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 0);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 0);
     await db.close();
   });
 

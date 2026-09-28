@@ -5581,6 +5581,7 @@ export async function addPriceChartingCardsToClaim(
   const orderStart = await db.query<{ next_order: number }>("select coalesce(max(sort_order), 0)::integer + 1 as next_order from claim_cards where claim_id = $1", [claim.id]);
   let nextOrder = Number(orderStart.rows[0]?.next_order || 1);
   if (!Number.isFinite(nextOrder)) nextOrder = 1;
+  const touchedCardIds: string[] = [];
   await db.exec("begin");
   try {
     for (const id of ids) {
@@ -5602,7 +5603,7 @@ export async function addPriceChartingCardsToClaim(
       if (!row) throw new Error(`PriceCharting ID ${id} no existe en el cache local.`);
       const pcUsd = optionalNumber(row.loose_price_usd);
       const suggested = suggestClaimPriceArs(pcUsd);
-      await db.query(`
+      const saved = await db.query<{ id: string }>(`
         insert into claim_cards (
           id, business_id, claim_id, section_id, pricecharting_id, canonical_url, product_name,
           expansion_name, card_number, image_url, pc_price_usd, suggested_ars, quantity, sort_order
@@ -5619,6 +5620,7 @@ export async function addPriceChartingCardsToClaim(
           suggested_ars = excluded.suggested_ars,
           quantity = case when $15 then excluded.quantity else claim_cards.quantity end,
           updated_at = now()
+        returning id
       `, [
         crypto.randomUUID(),
         actor.businessId,
@@ -5636,12 +5638,9 @@ export async function addPriceChartingCardsToClaim(
         nextOrder++,
         quantityById.has(id)
       ]);
+      if (saved.rows[0]?.id) touchedCardIds.push(String(saved.rows[0].id));
     }
-    const activeCards = await db.query<{ id: string }>(
-      "select id from claim_cards where claim_id = $1 and business_id = $2",
-      [claim.id, actor.businessId]
-    );
-    for (const card of activeCards.rows) await syncClaimCardStock(db, String(card.id), actor);
+    for (const cardId of touchedCardIds) await syncClaimCardStock(db, cardId, actor);
     await writeAudit(db, actor, "claim.cards.add", "claim", claim.id, null, { priceChartingIds: ids, cards, sectionId: targetSectionId });
     await db.exec("commit");
   } catch (error) {
@@ -5887,6 +5886,28 @@ export async function previewActiveClaimOrders(db: PGlite, actor: AuthenticatedU
   return toClaimOrderPreview(buildClaimOrderPlan(workspace));
 }
 
+export async function reconcileActiveClaimStock(
+  db: PGlite,
+  actor: AuthenticatedUser
+): Promise<{ workspace: ClaimsWorkspace; reconciledCards: number }> {
+  const workspace = await listClaimsWorkspace(db, actor.businessId);
+  const claim = workspace.activeClaim;
+  if (!claim) throw new Error("No hay un claim activo.");
+  await db.exec("begin");
+  try {
+    for (const card of workspace.cards) await syncClaimCardStock(db, card.id, actor);
+    await writeAudit(db, actor, "claim.stock.reconcile", "claim", claim.id, null, { cards: workspace.cards.length });
+    await db.exec("commit");
+  } catch (error) {
+    await db.exec("rollback");
+    throw error;
+  }
+  return {
+    workspace: await listClaimsWorkspace(db, actor.businessId),
+    reconciledCards: workspace.cards.length
+  };
+}
+
 async function syncClaimCardStock(db: PGlite, cardId: string, actor: AuthenticatedUser): Promise<string> {
   const state = await db.query<{ claim_id: string; quantity: number; stocked_quantity: number; inventory_item_id: string | null; stock_origin: string }>(`
     select claim_id, quantity, stocked_quantity, inventory_item_id, stock_origin
@@ -5898,10 +5919,59 @@ async function syncClaimCardStock(db: PGlite, cardId: string, actor: Authenticat
   if (!row) throw new Error("La carta ya no existe en el claim activo.");
   const card = (await listClaimCards(db, String(row.claim_id), actor.businessId)).find((item) => item.id === cardId);
   if (!card) throw new Error("No se pudo preparar la carta del claim para stock.");
-  const inventoryItemId = row.inventory_item_id || await resolveInventoryItemForClaimCard(db, card, actor);
+  const resolved = row.inventory_item_id
+    ? { inventoryItemId: row.inventory_item_id, created: false }
+    : await resolveInventoryItemForClaimCard(db, card, actor);
+  const inventoryItemId = resolved.inventoryItemId;
   if (row.stock_origin === "existing") {
     const item = await getInventoryItem(db, inventoryItemId, actor.businessId);
     if (!item) throw new Error(`${card.productName}: la carta vinculada ya no existe en stock.`);
+    return inventoryItemId;
+  }
+  const createdFromThisClaim = resolved.created || Boolean((await db.query<{ found: boolean }>(`
+    select exists (
+      select 1
+      from audit_log
+      where business_id = $1
+        and action = 'inventory.create_from_claim'
+        and entity_type = 'inventory_item'
+        and entity_id = $2
+        and coalesce(after_data->>'claimCardId', '') = $3
+    ) as found
+  `, [actor.businessId, inventoryItemId, cardId])).rows[0]?.found);
+  if (!createdFromThisClaim) {
+    const wronglyAdded = Math.max(0, Math.floor(Number(row.stocked_quantity) || 0));
+    if (wronglyAdded > 0) {
+      await db.query(`
+        update inventory_items
+        set quantity_on_hand = greatest(quantity_reserved, quantity_on_hand - $1),
+            updated_at = now()
+        where id = $2 and business_id = $3
+      `, [wronglyAdded, inventoryItemId, actor.businessId]);
+      await db.query(`
+        insert into inventory_movements (
+          id, business_id, inventory_item_id, movement_type, quantity_delta,
+          reference_type, reference_id, idempotency_key, note, created_by
+        ) values ($1, $2, $3, 'claim_stock_reconcile', $4, 'claim', $5, $6, $7, $8)
+      `, [
+        crypto.randomUUID(),
+        actor.businessId,
+        inventoryItemId,
+        -wronglyAdded,
+        String(row.claim_id),
+        `claim-stock-reconcile-${cardId}`,
+        `Correccion de ingreso duplicado desde claim: ${card.productName}`,
+        actor.id
+      ]);
+    }
+    await db.query(`
+      update claim_cards
+      set inventory_item_id = $1,
+          stocked_quantity = 0,
+          stock_origin = 'existing',
+          updated_at = now()
+      where id = $2 and business_id = $3
+    `, [inventoryItemId, cardId, actor.businessId]);
     return inventoryItemId;
   }
   const targetQuantity = Math.max(1, Math.floor(Number(row.quantity) || 1));
@@ -5951,7 +6021,8 @@ async function reserveInventoryForClaimCard(db: PGlite, claimId: string, card: C
     "select inventory_item_id from claim_cards where id = $1 and business_id = $2 limit 1",
     [card.id, actor.businessId]
   );
-  const inventoryItemId = linked.rows[0]?.inventory_item_id || await resolveInventoryItemForClaimCard(db, card, actor);
+  const inventoryItemId = linked.rows[0]?.inventory_item_id
+    || (await resolveInventoryItemForClaimCard(db, card, actor)).inventoryItemId;
   const item = await getInventoryItem(db, inventoryItemId, actor.businessId);
   if (!item) throw new Error(`No se pudo preparar stock para ${card.productName}.`);
   const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
@@ -5968,7 +6039,11 @@ async function reserveInventoryForClaimCard(db: PGlite, claimId: string, card: C
   return inventoryItemId;
 }
 
-async function resolveInventoryItemForClaimCard(db: PGlite, card: ClaimCard, actor: AuthenticatedUser): Promise<string> {
+async function resolveInventoryItemForClaimCard(
+  db: PGlite,
+  card: ClaimCard,
+  actor: AuthenticatedUser
+): Promise<{ inventoryItemId: string; created: boolean }> {
   const existing = card.priceChartingId ? await db.query<{ inventory_item_id: string }>(`
     select ii.id as inventory_item_id
     from external_identifiers ei
@@ -5979,7 +6054,7 @@ async function resolveInventoryItemForClaimCard(db: PGlite, card: ClaimCard, act
     order by ii.active desc, ii.created_at desc
     limit 1
   `, [actor.businessId, card.priceChartingId]) : { rows: [] };
-  if (existing.rows[0]) return String(existing.rows[0].inventory_item_id);
+  if (existing.rows[0]) return { inventoryItemId: String(existing.rows[0].inventory_item_id), created: false };
 
   const catalogEntry = card.priceChartingId ? await getPriceChartingCacheEntry(db, card.priceChartingId) : null;
   const language = catalogEntry?.languageGroup === "japanese" ? "JA" : catalogEntry?.languageGroup === "chinese" ? "ZH" : "EN";
@@ -6013,7 +6088,7 @@ async function resolveInventoryItemForClaimCard(db: PGlite, card: ClaimCard, act
   `, [itemId, actor.businessId, card.finalPriceArs || card.suggestedArs || 0, card.finalPriceUsd || card.pcPriceUsd || null]);
   await upsertExternalIdentifier(db, actor.businessId, productId, variantId, "pricecharting", card.priceChartingId, card.canonicalUrl);
   await writeAudit(db, actor, "inventory.create_from_claim", "inventory_item", itemId, null, { claimId: card.claimId, claimCardId: card.id, priceChartingId: card.priceChartingId, sku });
-  return itemId;
+  return { inventoryItemId: itemId, created: true };
 }
 
 export async function archiveActiveClaim(db: PGlite, actor: AuthenticatedUser): Promise<ClaimsWorkspace> {
