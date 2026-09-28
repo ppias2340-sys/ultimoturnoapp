@@ -553,6 +553,17 @@ export type CreateSaleInput = {
   lines: CommerceLineInput[];
 };
 
+export type UpdateReservationSaleLinesInput = {
+  lines: Array<{
+    saleItemId?: string;
+    inventoryItemId?: string;
+    quantity: number;
+    priceCurrency: "ARS" | "USD" | "FREE";
+    unitPriceArs?: number;
+    unitPriceUsd?: number;
+  }>;
+};
+
 export type SaleRecord = {
   id: string;
   createdByUserId: string;
@@ -4811,7 +4822,14 @@ export async function createSale(db: PGlite, input: CreateSaleInput, actor: Auth
       `, [crypto.randomUUID(), actor.businessId, saleId, line.inventoryItemId, item.ownerUserId || null, line.quantity, line.unitPriceArs, line.quantity * line.unitPriceArs, stockDisplayName(item), item.sku]);
 
       if (input.saleType === "reservation") {
-        await db.query("update inventory_items set quantity_reserved = quantity_reserved + $1, updated_at = now() where id = $2 and business_id = $3", [line.quantity, line.inventoryItemId, actor.businessId]);
+        const reserved = await db.query<{ id: string }>(`
+          update inventory_items
+          set quantity_reserved = quantity_reserved + $1, updated_at = now()
+          where id = $2 and business_id = $3
+            and quantity_on_hand - quantity_reserved >= $1
+          returning id
+        `, [line.quantity, line.inventoryItemId, actor.businessId]);
+        if (!reserved.rows[0]) throw new Error(`${item.product.name}: el stock disponible cambio mientras confirmabas.`);
         await db.query(`
           insert into reservations (id, business_id, inventory_item_id, quantity, status, channel, external_cart_id, idempotency_key)
           values ($1, $2, $3, $4, 'active', $5, $6, $7)
@@ -4821,7 +4839,14 @@ export async function createSale(db: PGlite, input: CreateSaleInput, actor: Auth
           values ($1, $2, $3, 'reservation', 0, 'sale', $4, $5, $6, $7)
         `, [crypto.randomUUID(), actor.businessId, line.inventoryItemId, saleId, `movement-reservation-${saleId}-${line.inventoryItemId}`, `Reserva para ${input.customerName.trim() || "cliente"}`, actor.id]);
       } else {
-        await db.query("update inventory_items set quantity_on_hand = quantity_on_hand - $1, updated_at = now() where id = $2 and business_id = $3", [line.quantity, line.inventoryItemId, actor.businessId]);
+        const sold = await db.query<{ id: string }>(`
+          update inventory_items
+          set quantity_on_hand = quantity_on_hand - $1, updated_at = now()
+          where id = $2 and business_id = $3
+            and quantity_on_hand - quantity_reserved >= $1
+          returning id
+        `, [line.quantity, line.inventoryItemId, actor.businessId]);
+        if (!sold.rows[0]) throw new Error(`${item.product.name}: el stock disponible cambio mientras confirmabas.`);
         await db.query(`
           insert into inventory_movements (id, business_id, inventory_item_id, movement_type, quantity_delta, reference_type, reference_id, idempotency_key, note, created_by)
           values ($1, $2, $3, 'sale', $4, 'sale', $5, $6, $7, $8)
@@ -4889,6 +4914,157 @@ export async function completeReservationSale(db: PGlite, saleId: string, actor:
     throw error;
   }
   return (await listSales(db, actor.businessId)).sales.find((row) => row.id === saleId)!;
+}
+
+export async function updateReservationSaleLines(db: PGlite, saleId: string, input: UpdateReservationSaleLinesInput, actor: AuthenticatedUser): Promise<SaleRecord> {
+  if (!Array.isArray(input.lines) || !input.lines.length) throw new Error("La orden debe conservar al menos una carta.");
+  const desiredLines = input.lines.map((raw) => {
+    const quantity = Number(raw.quantity);
+    const priceCurrency = String(raw.priceCurrency || "ARS") as "ARS" | "USD" | "FREE";
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("Las cantidades deben ser enteros positivos.");
+    if (!(["ARS", "USD", "FREE"] as const).includes(priceCurrency)) throw new Error("La moneda del precio no es valida.");
+    const unitPriceArs = priceCurrency === "ARS" ? Number(raw.unitPriceArs || 0) : 0;
+    const unitPriceUsd = priceCurrency === "USD" ? Number(raw.unitPriceUsd || 0) : 0;
+    if (!Number.isFinite(unitPriceArs) || unitPriceArs < 0 || !Number.isFinite(unitPriceUsd) || unitPriceUsd < 0) throw new Error("El precio de venta no es valido.");
+    return {
+      saleItemId: String(raw.saleItemId || "").trim(),
+      inventoryItemId: String(raw.inventoryItemId || "").trim(),
+      quantity,
+      priceCurrency,
+      unitPriceArs,
+      unitPriceUsd
+    };
+  });
+  const duplicateSaleItemIds = desiredLines.map((line) => line.saleItemId).filter(Boolean);
+  if (new Set(duplicateSaleItemIds).size !== duplicateSaleItemIds.length) throw new Error("Hay lineas repetidas en la edicion.");
+
+  await db.transaction(async (tx) => {
+    const connection = tx as unknown as PGlite;
+    const saleResult = await connection.query<Record<string, unknown>>(`
+      select id, created_by, customer_name, channel, status
+      from sales
+      where id = $1 and business_id = $2 and sale_type = 'reservation'
+      for update
+    `, [saleId, actor.businessId]);
+    const sale = saleResult.rows[0];
+    if (!sale) throw new Error("La orden ya no existe.");
+    if (!["pending", "packed"].includes(String(sale.status))) throw new Error("Solo se pueden editar ordenes pendientes o a embalar.");
+    const canManageAll = !actor.roles || actor.roles.includes("admin");
+    if (!canManageAll && String(sale.created_by || "") !== actor.id) throw new Error("No podes editar una orden creada por otro usuario.");
+
+    const currentResult = await connection.query<Record<string, unknown>>(`
+      select id, inventory_item_id, quantity, unit_price_ars, unit_price_usd, price_currency, packed_at
+      from sale_items
+      where sale_id = $1 and business_id = $2
+      order by id
+    `, [saleId, actor.businessId]);
+    const currentById = new Map(currentResult.rows.map((row) => [String(row.id), row]));
+    const desiredInventoryTotals = new Map<string, number>();
+    const currentInventoryTotals = new Map<string, number>();
+    for (const row of currentResult.rows) {
+      const inventoryItemId = String(row.inventory_item_id || "");
+      if (inventoryItemId) currentInventoryTotals.set(inventoryItemId, (currentInventoryTotals.get(inventoryItemId) || 0) + Number(row.quantity || 0));
+    }
+    for (const line of desiredLines) {
+      const current = line.saleItemId ? currentById.get(line.saleItemId) : undefined;
+      if (line.saleItemId && !current) throw new Error("Una linea de la orden cambio mientras la editabas. Volve a abrirla.");
+      const currentInventoryItemId = current ? String(current.inventory_item_id || "") : "";
+      if (currentInventoryItemId && line.inventoryItemId && line.inventoryItemId !== currentInventoryItemId) throw new Error("No se puede reemplazar una carta existente desde la misma linea.");
+      const inventoryItemId = currentInventoryItemId || line.inventoryItemId;
+      if (!current && !inventoryItemId) throw new Error("Falta identificar la carta agregada.");
+      line.inventoryItemId = inventoryItemId;
+      if (inventoryItemId) desiredInventoryTotals.set(inventoryItemId, (desiredInventoryTotals.get(inventoryItemId) || 0) + line.quantity);
+    }
+
+    const touchedInventoryIds = new Set([...currentInventoryTotals.keys(), ...desiredInventoryTotals.keys()]);
+    const stockById = new Map<string, DbStockRow>();
+    for (const inventoryItemId of touchedInventoryIds) {
+      await connection.query("select id from inventory_items where id = $1 and business_id = $2 for update", [inventoryItemId, actor.businessId]);
+      const item = await getInventoryItem(connection, inventoryItemId, actor.businessId);
+      if (!item) throw new Error("Una carta vinculada a la orden ya no existe en inventario.");
+      if (!canManageAll && item.ownerUserId !== actor.id) throw new Error(`${item.product.name}: pertenece a otro propietario.`);
+      const delta = (desiredInventoryTotals.get(inventoryItemId) || 0) - (currentInventoryTotals.get(inventoryItemId) || 0);
+      if (delta > item.availableQuantity) throw new Error(`${item.product.name}: solo quedan ${item.availableQuantity} unidades adicionales disponibles.`);
+      stockById.set(inventoryItemId, item);
+    }
+
+    const desiredIds = new Set(desiredLines.map((line) => line.saleItemId).filter(Boolean));
+    for (const row of currentResult.rows) {
+      if (!desiredIds.has(String(row.id))) await connection.query("delete from sale_items where id = $1 and business_id = $2", [String(row.id), actor.businessId]);
+    }
+    for (const line of desiredLines) {
+      const current = line.saleItemId ? currentById.get(line.saleItemId) : undefined;
+      const lineTotalArs = line.priceCurrency === "ARS" ? line.quantity * line.unitPriceArs : 0;
+      const lineTotalUsd = line.priceCurrency === "USD" ? line.quantity * line.unitPriceUsd : 0;
+      if (current) {
+        await connection.query(`
+          update sale_items
+          set quantity = $1,
+              unit_price_ars = $2,
+              unit_price_usd = $3,
+              line_total_ars = $4,
+              line_total_usd = $5,
+              price_currency = $6,
+              packed_at = case when quantity = $1 then packed_at else null end
+          where id = $7 and business_id = $8
+        `, [line.quantity, line.unitPriceArs, line.unitPriceUsd, lineTotalArs, lineTotalUsd, line.priceCurrency, line.saleItemId, actor.businessId]);
+      } else {
+        const item = stockById.get(line.inventoryItemId)!;
+        await connection.query(`
+          insert into sale_items (
+            id, business_id, sale_id, inventory_item_id, owner_user_id, quantity,
+            unit_price_ars, unit_price_usd, line_total_ars, line_total_usd,
+            price_currency, display_name, sku_snapshot
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `, [crypto.randomUUID(), actor.businessId, saleId, item.id, item.ownerUserId || null, line.quantity, line.unitPriceArs, line.unitPriceUsd, lineTotalArs, lineTotalUsd, line.priceCurrency, stockDisplayName(item), item.sku]);
+      }
+    }
+
+    for (const inventoryItemId of touchedInventoryIds) {
+      const previousQuantity = currentInventoryTotals.get(inventoryItemId) || 0;
+      const nextQuantity = desiredInventoryTotals.get(inventoryItemId) || 0;
+      const delta = nextQuantity - previousQuantity;
+      if (delta) {
+        const adjusted = await connection.query<{ id: string }>(`
+          update inventory_items
+          set quantity_reserved = greatest(0, quantity_reserved + $1), updated_at = now()
+          where id = $2 and business_id = $3
+            and ($1 <= 0 or quantity_on_hand - quantity_reserved >= $1)
+          returning id
+        `, [delta, inventoryItemId, actor.businessId]);
+        if (!adjusted.rows[0]) throw new Error(`${stockById.get(inventoryItemId)?.product.name || "Carta"}: el stock disponible cambio mientras guardabas.`);
+      }
+      await connection.query(`
+        update reservations
+        set status = 'released', released_at = now()
+        where business_id = $1 and external_cart_id = $2 and inventory_item_id = $3 and status = 'active'
+      `, [actor.businessId, saleId, inventoryItemId]);
+      if (nextQuantity > 0) {
+        await connection.query(`
+          insert into reservations (id, business_id, inventory_item_id, quantity, status, channel, external_cart_id, idempotency_key)
+          values ($1, $2, $3, $4, 'active', $5, $6, $7)
+        `, [crypto.randomUUID(), actor.businessId, inventoryItemId, nextQuantity, String(sale.channel || "mostrador"), saleId, `order-edit-${saleId}-${inventoryItemId}-${crypto.randomUUID()}`]);
+      }
+      if (delta) {
+        await connection.query(`
+          insert into inventory_movements (id, business_id, inventory_item_id, movement_type, quantity_delta, reference_type, reference_id, idempotency_key, note, created_by)
+          values ($1, $2, $3, 'reservation', 0, 'sale', $4, $5, $6, $7)
+        `, [crypto.randomUUID(), actor.businessId, inventoryItemId, saleId, `order-edit-movement-${crypto.randomUUID()}`, `Reserva ajustada ${delta > 0 ? "+" : ""}${delta} al editar orden`, actor.id]);
+      }
+    }
+    await connection.query(`
+      update sales
+      set total_ars = coalesce((select sum(line_total_ars) from sale_items where sale_id = $1 and business_id = $2), 0),
+          total_usd = coalesce((select sum(line_total_usd) from sale_items where sale_id = $1 and business_id = $2), 0)
+      where id = $1 and business_id = $2
+    `, [saleId, actor.businessId]);
+    await syncSalePackedStatus(connection, actor.businessId, saleId);
+    await writeAudit(connection, actor, "sale.lines.update", "sale", saleId, currentResult.rows, desiredLines);
+  });
+  await moveSaleToRuleColumn(db, actor.businessId, saleId, true);
+  const updated = (await listSales(db, actor.businessId)).sales.find((sale) => sale.id === saleId);
+  if (!updated) throw new Error("No se pudo leer la orden actualizada.");
+  return updated;
 }
 
 export async function updateSalePayment(db: PGlite, saleId: string, amountPaidArs: number | undefined, actor: AuthenticatedUser, paymentDueAt?: string): Promise<SaleRecord> {

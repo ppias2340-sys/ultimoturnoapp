@@ -109,6 +109,7 @@ import {
   updateClaimSection,
   updateActiveClaimSettings,
   updateSaleItemPacked,
+  updateReservationSaleLines,
   updateSaleInternalNote,
   updateSaleMessageSent,
   updateSalePayment,
@@ -4387,6 +4388,13 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
       const saleId = url.pathname.split("/")[2];
       const body = await readJson<{ amountPaidArs?: number; paymentDueAt?: string }>(request);
       sendJson(response, 200, { sale: await updateSalePayment(db, saleId, body.amountPaidArs, user, body.paymentDueAt) });
+      return;
+    }
+
+    if (url.pathname.match(/^\/sales\/[^/]+\/lines$/) && request.method === "PUT") {
+      const saleId = url.pathname.split("/")[2];
+      const body = await readJson<Parameters<typeof updateReservationSaleLines>[2]>(request);
+      sendJson(response, 200, { sale: await updateReservationSaleLines(db, saleId, body, user) });
       return;
     }
 

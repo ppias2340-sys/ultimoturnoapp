@@ -7,6 +7,22 @@ Actualizado: 2026-09-28
 
 ## Prioridades vigentes
 
+### Pilotear edicion de ordenes
+
+- Abrir una orden pendiente desde el tablero y usar `Editar cartas` para sumar
+  una carta disponible, cambiar cantidad y precio, y quitar una linea.
+- Confirmar que los totales ARS/USD cambien al guardar y que Inventario refleje
+  exactamente las nuevas cantidades reservadas.
+- Probar una orden `A embalar`: al cambiar la cantidad de una carta debe quedar
+  desmarcada como embalada. Las ordenes pagadas o entregadas deben permanecer
+  de solo lectura.
+- Con dos sesiones, intentar reservar la ultima unidad al mismo tiempo. Una
+  operacion debe completarse y la otra informar que el stock cambio, sin dejar
+  una orden ni reservas parciales.
+
+Senal de exito: se corrige una orden sin cancelarla ni recrearla, los totales y
+reservas coinciden y nunca se genera stock negativo o doble reserva.
+
 ### Pilotear usuarios con stock propio
 
 - Confirmar el primer ingreso de Mayra, Seb y Melo como administradores y de

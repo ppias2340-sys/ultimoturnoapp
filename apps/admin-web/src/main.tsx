@@ -425,6 +425,15 @@ type SaleRecord = {
   lines: Array<CartLine & { name: string; sku: string; imageUrl: string; unitPriceUsd: number; lineTotalArs: number; lineTotalUsd: number; priceCurrency: "ARS" | "USD" | "FREE"; saleItemId: string; packed: boolean; packedAt?: string }>;
 };
 
+type OrderLineUpdate = {
+  saleItemId?: string;
+  inventoryItemId?: string;
+  quantity: number;
+  priceCurrency: "ARS" | "USD" | "FREE";
+  unitPriceArs?: number;
+  unitPriceUsd?: number;
+};
+
 type PurchaseRecord = {
   id: string;
   sellerName: string;
@@ -1133,8 +1142,8 @@ function App() {
         const [plansData, claimsData, stockData] = await Promise.all([api<ClaimPlansResponse>("/claim-plans"), api<ClaimsWorkspace>("/claims"), api<{ summary: StockSummary; items: StockRow[] }>("/stock")]);
         setClaimPlans(plansData); setClaims(claimsData); setStock(stockData);
       } else if (targetView === "orders") {
-        const [salesData, claimsData] = await Promise.all([api<{ sales: SaleRecord[] }>("/sales"), api<ClaimsWorkspace>("/claims")]);
-        setSales(salesData.sales); setClaims(claimsData);
+        const [salesData, claimsData, stockData] = await Promise.all([api<{ sales: SaleRecord[] }>("/sales"), api<ClaimsWorkspace>("/claims"), api<{ summary: StockSummary; items: StockRow[] }>("/stock")]);
+        setSales(salesData.sales); setClaims(claimsData); setStock(stockData);
       } else if (targetView === "sales") {
         const [salesData, purchasesData, stockData] = await Promise.all([api<{ sales: SaleRecord[] }>("/sales"), api<{ purchases: PurchaseRecord[] }>("/purchases"), api<{ summary: StockSummary; items: StockRow[] }>("/stock")]);
         setSales(salesData.sales); setPurchases(purchasesData.purchases); setStock(stockData);
@@ -1663,6 +1672,18 @@ function App() {
       showMessage("Pago y fecha de la orden actualizados.");
     } catch (nextError) {
       showError(nextError);
+    }
+  }
+
+  async function updateOrderLines(id: string, lines: OrderLineUpdate[]) {
+    try {
+      const result = await api<{ sale: SaleRecord }>(`/sales/${id}/lines`, { method: "PUT", body: { lines } });
+      setSales((current) => current.map((sale) => sale.id === result.sale.id ? result.sale : sale));
+      await refreshStock();
+      showMessage("Cartas, precios y reservas de la orden actualizados.");
+    } catch (nextError) {
+      showError(nextError);
+      throw nextError;
     }
   }
 
@@ -2747,7 +2768,7 @@ function App() {
       {view === "claims" ? <ClaimsView workspace={claims} stockItems={stock.items} priceChartingCache={priceChartingCache} blueRate={blueRate} claimImageSearching={claimImageSearching} claimCardImageSearching={claimCardImageSearching} claimPriceRefreshing={claimPriceRefreshing} onCreateClaim={(name) => void createClaim(name)} onUpdateClaimSettings={(patch) => void updateClaimSettings(patch)} onSearchPriceCharting={(search, languageGroup) => void searchPriceChartingCache(search, languageGroup)} onAddCards={(ids, sectionId, cards) => void addClaimCards(ids, sectionId, cards)} onUpdateCard={(cardId, patch) => void updateClaimCard(cardId, patch)} onDeleteCard={(cardId) => void deleteClaimCard(cardId)} onSearchCardImage={(cardId) => void searchClaimCardImage(cardId)} onCreateSection={(name) => void createClaimSection(name)} onUpdateSection={(sectionId, patch) => void updateClaimSection(sectionId, patch)} onDeleteSection={(sectionId) => void deleteClaimSection(sectionId)} onAddFree={(input) => void addClaimFree(input)} onExportClaimCsv={() => exportClaimWorkspaceCsv(claims)} onExportOrders={() => void exportClaimOrdersPreview()} onGenerateGrid={() => void generateClaimGrid()} onSearchClaimImages={() => void searchClaimImages()} onRefreshClaimPrices={() => void refreshClaimPrices()} onStartLive={() => setView("claim-live")} onCloseClaim={() => void closeClaim()} onArchiveClaim={() => void archiveClaim()} /> : null}
       {view === "claim-planner" ? <ClaimPlannerView plansData={claimPlans} stockItems={stock.items} activeClaim={claims.activeClaim} onCreatePlan={createClaimPlanDraft} onUpdatePlan={updateClaimPlanDraft} onSaveItems={saveClaimPlanItems} onRemoveItem={removeClaimPlanItem} onGenerateProposal={generateClaimPlanProposal} onPublish={publishClaimPlanDraft} onError={showError} /> : null}
       {view === "claim-live" ? <ClaimLiveView workspace={claims} blueRate={blueRate} onGoClaims={() => setView("claims")} /> : null}
-      {view === "orders" ? <OrdersView sales={sales} claims={claims} blueRate={blueRate} onComplete={(id) => updateOrder(id, "complete")} onCancel={(id) => updateOrder(id, "cancel")} onPacked={(id) => updateOrder(id, "packed")} onDelivered={(id) => updateOrder(id, "delivered")} onPayment={updateOrderPayment} onNote={updateOrderNote} onMessageSent={updateOrderMessageSent} onLinePacked={updateOrderLinePacked} /> : null}
+      {view === "orders" ? <OrdersView sales={sales} claims={claims} stockItems={stock.items} blueRate={blueRate} onComplete={(id) => updateOrder(id, "complete")} onCancel={(id) => updateOrder(id, "cancel")} onPacked={(id) => updateOrder(id, "packed")} onDelivered={(id) => updateOrder(id, "delivered")} onPayment={updateOrderPayment} onNote={updateOrderNote} onMessageSent={updateOrderMessageSent} onLinePacked={updateOrderLinePacked} onLines={updateOrderLines} /> : null}
       {view === "sales" ? <SalesView sales={sales} purchases={purchases} items={stock.items} blueRate={blueRate} /> : null}
       {view === "purchases" ? (
         <PurchasesView
@@ -4411,12 +4432,12 @@ function OrdersView(props: Parameters<typeof OrdersListView>[0]) {
     })}</div>
     <dialog aria-label="Detalle de orden" className="trello-order-dialog" ref={dialog} onCancel={()=>setOpenId("")} onClose={()=>setOpenId("")}>
       {openOrder && <><header className="trello-dialog-heading"><h2>{openOrder.customerName}</h2><button autoFocus className="secondary-action" onClick={()=>setOpenId("")}>Cerrar</button></header><div className="trello-move"><label>Mover a<select value={destination} onChange={e=>setDestination(e.target.value)}>{workspace?.boards.map(b=><optgroup key={b.id} label={b.name}>{workspace.columns.filter(c=>c.boardId===b.id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</optgroup>)}</select></label><button className="secondary-action" disabled={busy || !destination || destination===columnOf(openId)} onClick={()=>void change({action:"move",saleId:openId,columnId:destination})}>Mover tarjeta</button><span role="status">{busy?"Guardando...":notice}</span>{error && <span role="alert">{error}</span>}</div>
-        <OrderCard key={openId} order={openOrder} boardLabel={workspace?.columns.find(c=>c.id===columnOf(openId))?.name || "Orden"} blueRate={props.blueRate} open focused={false} selected={false} copied={false} onToggle={()=>{}} onSelectedChange={()=>{}} onComplete={async id=>{await props.onComplete(id);refreshBoards();}} onCancel={async id=>{await props.onCancel(id);refreshBoards();}} onPacked={async id=>{await props.onPacked(id);refreshBoards();}} onDelivered={async id=>{await props.onDelivered(id);refreshBoards();}} onPayment={async (id,amount,due)=>{await props.onPayment(id,amount,due);refreshBoards();}} onNote={async (id,note)=>{await props.onNote(id,note);}} onMessageSent={sent=>props.onMessageSent(openId,sent)} onLinePacked={async (id,packed)=>{await props.onLinePacked(id,packed);refreshBoards();}} onCopy={()=>void copyToClipboard(buildClaimOrderMessage(openOrder))}/></>}
+        <OrderCard key={openId} order={openOrder} boardLabel={workspace?.columns.find(c=>c.id===columnOf(openId))?.name || "Orden"} stockItems={props.stockItems} blueRate={props.blueRate} open focused={false} selected={false} copied={false} onToggle={()=>{}} onSelectedChange={()=>{}} onComplete={async id=>{await props.onComplete(id);refreshBoards();}} onCancel={async id=>{await props.onCancel(id);refreshBoards();}} onPacked={async id=>{await props.onPacked(id);refreshBoards();}} onDelivered={async id=>{await props.onDelivered(id);refreshBoards();}} onPayment={async (id,amount,due)=>{await props.onPayment(id,amount,due);refreshBoards();}} onNote={async (id,note)=>{await props.onNote(id,note);}} onMessageSent={sent=>props.onMessageSent(openId,sent)} onLinePacked={async (id,packed)=>{await props.onLinePacked(id,packed);refreshBoards();}} onLines={async (id,lines)=>{await props.onLines(id,lines);refreshBoards();}} onCopy={()=>void copyToClipboard(buildClaimOrderMessage(openOrder))}/></>}
     </dialog>
   </section>;
 }
 
-function OrdersListView({ sales, claims, blueRate, onComplete, onCancel, onPacked, onDelivered, onPayment, onNote, onMessageSent, onLinePacked }: { sales: SaleRecord[]; claims: ClaimsWorkspace; blueRate: BlueExchangeRate; onComplete: (id: string) => Promise<void>; onCancel: (id: string) => Promise<void>; onPacked: (id: string) => Promise<void>; onDelivered: (id: string) => Promise<void>; onPayment: (id: string, amount: number, paymentDueAt?: string) => Promise<void>; onNote: (id: string, note: string) => Promise<void>; onMessageSent: (id: string, sent: boolean) => Promise<void>; onLinePacked: (id: string, packed: boolean) => Promise<void> }) {
+function OrdersListView({ sales, claims, stockItems, blueRate, onComplete, onCancel, onPacked, onDelivered, onPayment, onNote, onMessageSent, onLinePacked, onLines }: { sales: SaleRecord[]; claims: ClaimsWorkspace; stockItems: StockRow[]; blueRate: BlueExchangeRate; onComplete: (id: string) => Promise<void>; onCancel: (id: string) => Promise<void>; onPacked: (id: string) => Promise<void>; onDelivered: (id: string) => Promise<void>; onPayment: (id: string, amount: number, paymentDueAt?: string) => Promise<void>; onNote: (id: string, note: string) => Promise<void>; onMessageSent: (id: string, sent: boolean) => Promise<void>; onLinePacked: (id: string, packed: boolean) => Promise<void>; onLines: (id: string, lines: OrderLineUpdate[]) => Promise<void> }) {
   const reservations = sales.filter((sale) => sale.saleType === "reservation");
   const activeOrders = reservations.filter((sale) => sale.status !== "delivered" && sale.status !== "cancelled");
   const deliveredOrders = reservations.filter((sale) => sale.status === "delivered");
@@ -4563,19 +4584,48 @@ function OrdersListView({ sales, claims, blueRate, onComplete, onCancel, onPacke
       {visibleOrders.length ? <div className="order-list">
         <div className="order-list-header"><label><input type="checkbox" disabled={!batchableVisibleOrders.length} checked={allVisibleSelected} onChange={toggleVisibleSelection} /></label><span>Comprador</span><span>Cobro</span><span>Mensaje</span><span>Embalaje</span><span>Estado</span><span>Acciones</span></div>
         {visibleOrders.map((order) => (
-          <OrderCard key={order.id} order={order} boardLabel={boardLabel(order)} blueRate={blueRate} open={openOrderIds.includes(order.id)} focused={focusedOrderId === order.id} selected={order.status !== "delivered" && selectedOrderIds.includes(order.id)} copied={copiedOrderId === order.id} onToggle={() => toggleOrder(order.id)} onSelectedChange={() => toggleSelectedOrder(order.id)} onComplete={onComplete} onCancel={onCancel} onPacked={onPacked} onDelivered={onDelivered} onPayment={onPayment} onNote={onNote} onMessageSent={(sent) => onMessageSent(order.id, sent)} onLinePacked={onLinePacked} onCopy={async () => { if (await copyToClipboard(buildClaimOrderMessage(order))) { setCopiedOrderId(order.id); if (!order.messageSentAt) await onMessageSent(order.id, true); window.setTimeout(() => setCopiedOrderId(""), 1200); } }} />
+          <OrderCard key={order.id} order={order} boardLabel={boardLabel(order)} stockItems={stockItems} blueRate={blueRate} open={openOrderIds.includes(order.id)} focused={focusedOrderId === order.id} selected={order.status !== "delivered" && selectedOrderIds.includes(order.id)} copied={copiedOrderId === order.id} onToggle={() => toggleOrder(order.id)} onSelectedChange={() => toggleSelectedOrder(order.id)} onComplete={onComplete} onCancel={onCancel} onPacked={onPacked} onDelivered={onDelivered} onPayment={onPayment} onNote={onNote} onMessageSent={(sent) => onMessageSent(order.id, sent)} onLinePacked={onLinePacked} onLines={onLines} onCopy={async () => { if (await copyToClipboard(buildClaimOrderMessage(order))) { setCopiedOrderId(order.id); if (!order.messageSentAt) await onMessageSent(order.id, true); window.setTimeout(() => setCopiedOrderId(""), 1200); } }} />
         ))}
       </div> : <EmptyState title={orders.length ? "Sin coincidencias" : showingDelivered ? "Sin entregas realizadas" : "Sin ordenes activas"} body={orders.length ? "No hay compradores ni cartas que coincidan con esa busqueda." : showingDelivered ? "Cuando marques una orden como entregada, va a quedar registrada aca como historial." : "Las reservas creadas desde Inventario / Venta aparecen aca."} />}
     </section>
   );
 }
 
-function OrderCard({ order, boardLabel, blueRate, open, focused, selected, copied, onToggle, onSelectedChange, onComplete, onCancel, onPacked, onDelivered, onPayment, onNote, onMessageSent, onLinePacked, onCopy }: { order: SaleRecord; boardLabel: string; blueRate: BlueExchangeRate; open: boolean; focused: boolean; selected: boolean; copied: boolean; onToggle: () => void; onSelectedChange: () => void; onComplete: (id: string) => Promise<void>; onCancel: (id: string) => Promise<void>; onPacked: (id: string) => Promise<void>; onDelivered: (id: string) => Promise<void>; onPayment: (id: string, amount: number, paymentDueAt?: string) => Promise<void>; onNote: (id: string, note: string) => Promise<void>; onMessageSent: (sent: boolean) => void; onLinePacked: (id: string, packed: boolean) => Promise<void>; onCopy: () => void }) {
+type OrderLineDraft = {
+  key: string;
+  saleItemId: string;
+  inventoryItemId: string;
+  name: string;
+  imageUrl: string;
+  quantity: string;
+  priceCurrency: "ARS" | "USD" | "FREE";
+  price: string;
+};
+
+function orderLineDrafts(order: SaleRecord): OrderLineDraft[] {
+  return order.lines.map((line) => ({
+    key: line.saleItemId || `${line.inventoryItemId}-${line.name}`,
+    saleItemId: line.saleItemId,
+    inventoryItemId: line.inventoryItemId,
+    name: line.name,
+    imageUrl: line.imageUrl,
+    quantity: String(line.quantity),
+    priceCurrency: line.priceCurrency,
+    price: String(line.priceCurrency === "USD" ? line.unitPriceUsd : line.priceCurrency === "FREE" ? 0 : line.unitPriceArs)
+  }));
+}
+
+function OrderCard({ order, boardLabel, stockItems, blueRate, open, focused, selected, copied, onToggle, onSelectedChange, onComplete, onCancel, onPacked, onDelivered, onPayment, onNote, onMessageSent, onLinePacked, onLines, onCopy }: { order: SaleRecord; boardLabel: string; stockItems: StockRow[]; blueRate: BlueExchangeRate; open: boolean; focused: boolean; selected: boolean; copied: boolean; onToggle: () => void; onSelectedChange: () => void; onComplete: (id: string) => Promise<void>; onCancel: (id: string) => Promise<void>; onPacked: (id: string) => Promise<void>; onDelivered: (id: string) => Promise<void>; onPayment: (id: string, amount: number, paymentDueAt?: string) => Promise<void>; onNote: (id: string, note: string) => Promise<void>; onMessageSent: (sent: boolean) => void; onLinePacked: (id: string, packed: boolean) => Promise<void>; onLines: (id: string, lines: OrderLineUpdate[]) => Promise<void>; onCopy: () => void }) {
   const [paymentDraft, setPaymentDraft] = useState("");
   const [quickPaymentOpen, setQuickPaymentOpen] = useState(false);
   const [quickPaymentMode, setQuickPaymentMode] = useState<"full" | "partial">("full");
   const [dueDraft, setDueDraft] = useState(order.paymentDueAt ? order.paymentDueAt.slice(0, 10) : "");
   const [noteDraft, setNoteDraft] = useState(order.internalNote || "");
+  const [editingLines, setEditingLines] = useState(false);
+  const [lineDrafts, setLineDrafts] = useState<OrderLineDraft[]>(() => orderLineDrafts(order));
+  const [lineSearch, setLineSearch] = useState("");
+  const [lineSaving, setLineSaving] = useState(false);
+  const [lineError, setLineError] = useState("");
   useEffect(() => setPaymentDraft(""), [order.id, order.amountPaidArs]);
   useEffect(() => setDueDraft(order.paymentDueAt ? order.paymentDueAt.slice(0, 10) : ""), [order.paymentDueAt]);
   useEffect(() => setNoteDraft(order.internalNote || ""), [order.id, order.internalNote]);
@@ -4586,6 +4636,61 @@ function OrderCard({ order, boardLabel, blueRate, open, focused, selected, copie
   const canBatchSelect = order.status !== "cancelled" && !isDelivered;
   const canPack = order.status !== "cancelled" && !isDelivered;
   const canEdit = order.status !== "cancelled" && order.status !== "paid" && order.status !== "delivered";
+  const startLineEditing = () => {
+    setLineDrafts(orderLineDrafts(order));
+    setLineSearch("");
+    setLineError("");
+    setEditingLines(true);
+  };
+  const updateLineDraft = (key: string, patch: Partial<OrderLineDraft>) => setLineDrafts((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
+  const selectedInventoryIds = new Set(lineDrafts.map((line) => line.inventoryItemId).filter(Boolean));
+  const normalizedLineSearch = normalize(lineSearch);
+  const stockMatches = normalizedLineSearch.length < 2 ? [] : stockItems
+    .filter((item) => item.active && item.availableQuantity > 0 && !selectedInventoryIds.has(item.id))
+    .filter((item) => normalize([item.product.name, item.product.expansion, item.product.number, item.sku].join(" ")).includes(normalizedLineSearch))
+    .sort((left, right) => right.availableQuantity - left.availableQuantity || left.product.name.localeCompare(right.product.name, "es"))
+    .slice(0, 8);
+  const addOrderStockLine = (item: StockRow) => {
+    const useUsd = !item.priceArs && Boolean(item.priceUsd);
+    setLineDrafts((current) => [...current, {
+      key: `new-${item.id}`,
+      saleItemId: "",
+      inventoryItemId: item.id,
+      name: stockDisplayLabel(item),
+      imageUrl: item.product.imageUrl || "",
+      quantity: "1",
+      priceCurrency: useUsd ? "USD" : "ARS",
+      price: String(useUsd ? item.priceUsd || 0 : item.priceArs || 0)
+    }]);
+    setLineSearch("");
+  };
+  const saveOrderLines = async () => {
+    if (!lineDrafts.length) { setLineError("La orden debe conservar al menos una carta."); return; }
+    const lines: OrderLineUpdate[] = [];
+    for (const line of lineDrafts) {
+      const quantity = Number(line.quantity);
+      const price = Number(line.price);
+      if (!Number.isInteger(quantity) || quantity <= 0) { setLineError(`${line.name}: indica una cantidad entera mayor a cero.`); return; }
+      if (!Number.isFinite(price) || price < 0) { setLineError(`${line.name}: indica un precio valido.`); return; }
+      lines.push({
+        ...(line.saleItemId ? { saleItemId: line.saleItemId } : { inventoryItemId: line.inventoryItemId }),
+        quantity,
+        priceCurrency: line.priceCurrency,
+        unitPriceArs: line.priceCurrency === "ARS" ? price : 0,
+        unitPriceUsd: line.priceCurrency === "USD" ? price : 0
+      });
+    }
+    setLineSaving(true);
+    setLineError("");
+    try {
+      await onLines(order.id, lines);
+      setEditingLines(false);
+    } catch (error) {
+      setLineError(errorMessage(error));
+    } finally {
+      setLineSaving(false);
+    }
+  };
   const paymentToAdd = Math.max(0, Number(paymentDraft) || 0);
   const nextPaid = Math.min(order.totalArs, (order.amountPaidArs || 0) + paymentToAdd);
   const remaining = Math.max(0, order.totalArs - (order.amountPaidArs || 0));
@@ -4679,8 +4784,23 @@ function OrderCard({ order, boardLabel, blueRate, open, focused, selected, copie
             </section>
           </div>
           <section className="order-work-panel order-items-panel">
-            <div className="order-panel-heading"><h4>Cartas</h4><span>{packedUnits}/{units} embaladas</span></div>
-            <div className="order-lines">{order.lines.map((line) => <label className={`order-line ${line.packed ? "packed" : ""}`} key={line.saleItemId || `${order.id}-${line.inventoryItemId}-${line.name}`}><input type="checkbox" disabled={!canPack || !line.saleItemId} checked={line.packed} onChange={(event) => onLinePacked(line.saleItemId, event.target.checked)} /><CardArt src={line.imageUrl} alt={line.name} label={line.name} className="order-line-image" fallbackClassName="order-line-image order-line-image-placeholder" /><span>{line.quantity} x {line.name}</span><MoneyStack ars={line.lineTotalArs || null} usd={line.lineTotalUsd || null} blueRate={blueRate} compact /></label>)}</div>
+            <div className="order-panel-heading"><h4>Cartas</h4><div className="order-items-heading-actions"><span>{packedUnits}/{units} embaladas</span>{canEdit && !editingLines ? <button className="secondary-action" onClick={startLineEditing}><Icon name="edit" />Editar cartas</button> : null}</div></div>
+            {editingLines ? <div className="order-line-editor">
+              <div className="order-line-editor-list">{lineDrafts.map((line) => <article className="order-edit-line" key={line.key}>
+                <CardArt src={line.imageUrl} alt={line.name} label={line.name} className="order-line-image" fallbackClassName="order-line-image order-line-image-placeholder" />
+                <strong>{line.name}</strong>
+                <label>Cantidad<div className="order-edit-quantity"><button type="button" aria-label={`Restar ${line.name}`} onClick={() => updateLineDraft(line.key, { quantity: String(Math.max(1, (Number(line.quantity) || 1) - 1)) })}>-</button><input inputMode="numeric" type="number" min={1} step={1} value={line.quantity} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateLineDraft(line.key, { quantity: event.target.value })} /><button type="button" aria-label={`Sumar ${line.name}`} onClick={() => updateLineDraft(line.key, { quantity: String((Number(line.quantity) || 0) + 1) })}>+</button></div></label>
+                <label>Precio<select value={line.priceCurrency} onChange={(event) => updateLineDraft(line.key, { priceCurrency: event.target.value as OrderLineDraft["priceCurrency"], price: event.target.value === "FREE" ? "0" : line.price })}><option value="ARS">ARS</option><option value="USD">USD</option><option value="FREE">Gratis</option></select></label>
+                <label>Monto<input type="number" min={0} step={line.priceCurrency === "ARS" ? 100 : 0.01} disabled={line.priceCurrency === "FREE"} value={line.price} onFocus={(event) => event.currentTarget.select()} onChange={(event) => updateLineDraft(line.key, { price: event.target.value })} /></label>
+                <button type="button" className="remove-action" aria-label={`Quitar ${line.name}`} title="Quitar carta" onClick={() => setLineDrafts((current) => current.filter((candidate) => candidate.key !== line.key))}><Icon name="close" /></button>
+              </article>)}</div>
+              <div className="order-add-stock">
+                <label><span>Agregar carta del stock</span><div className="order-stock-search"><Icon name="search" /><input value={lineSearch} onChange={(event) => setLineSearch(event.target.value)} placeholder="Nombre, expansion, numero o SKU" /></div></label>
+                {stockMatches.length ? <div className="order-stock-results">{stockMatches.map((item) => <button type="button" key={item.id} onClick={() => addOrderStockLine(item)}><CardArt src={item.product.imageUrl} alt={item.product.name} label={item.product.name} className="order-stock-result-image" fallbackClassName="order-stock-result-image image-placeholder" /><span><strong>{item.product.name}</strong><small>{item.product.expansion}{item.product.number ? ` #${item.product.number}` : ""} · {item.availableQuantity} disp.</small></span><MoneyStack ars={item.priceArs || null} usd={item.priceUsd} blueRate={blueRate} compact /><Icon name="plus" /></button>)}</div> : normalizedLineSearch.length >= 2 ? <p className="muted">No hay otra carta disponible con esa busqueda.</p> : null}
+              </div>
+              {lineError ? <div className="feedback error" role="alert">{lineError}</div> : null}
+              <div className="order-line-editor-actions"><button type="button" className="secondary-action" disabled={lineSaving} onClick={() => { setEditingLines(false); setLineError(""); }}>Cancelar</button><button type="button" className="primary-action" disabled={lineSaving || !lineDrafts.length} onClick={() => void saveOrderLines()}><Icon name="check" />{lineSaving ? "Guardando..." : "Guardar cambios"}</button></div>
+            </div> : <div className="order-lines">{order.lines.map((line) => <label className={`order-line ${line.packed ? "packed" : ""}`} key={line.saleItemId || `${order.id}-${line.inventoryItemId}-${line.name}`}><input type="checkbox" disabled={!canPack || !line.saleItemId} checked={line.packed} onChange={(event) => onLinePacked(line.saleItemId, event.target.checked)} /><CardArt src={line.imageUrl} alt={line.name} label={line.name} className="order-line-image" fallbackClassName="order-line-image order-line-image-placeholder" /><span>{line.quantity} x {line.name}</span><MoneyStack ars={line.lineTotalArs || null} usd={line.lineTotalUsd || null} blueRate={blueRate} compact /></label>)}</div>}
           </section>
           <div className="order-actions">{canEdit ? <><button className="secondary-action danger-action" onClick={requestDeleteOrder}><Icon name="close" />Eliminar orden</button><button className="primary-action" onClick={() => onComplete(order.id)}><Icon name="check" />Marcar pagada</button></> : null}{order.status === "paid" ? <button className="primary-action delivered-action" onClick={() => onDelivered(order.id)}><Icon name="check" />Entregado</button> : null}</div>
         </div>

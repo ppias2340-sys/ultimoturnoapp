@@ -51,6 +51,7 @@ import {
   repairInventorySalePrices,
   resetInventoryStock,
   updateClaimCard,
+  updateReservationSaleLines,
   upsertClaimPlanItems,
   upsertInventoryItem
 } from "./index.js";
@@ -407,6 +408,76 @@ describe("operational inventory database", () => {
     }, user);
     stock = await listStockForBusiness(db, user.businessId);
     assert.equal(stock.items[0].quantityOnHand, 7);
+    await db.close();
+  });
+
+  it("edits pending order lines while keeping stock reservations and totals consistent", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-order-edit-"));
+    const db = await createOperationalDatabase({ dataDir });
+    const user = await getDefaultOperationalUser(db);
+    const first = await upsertInventoryItem(db, {
+      sku: "TEST-ORDER-EDIT-001",
+      name: "Pikachu Editable",
+      expansion: "Set Operativo",
+      number: "25",
+      language: "EN",
+      condition: "NM",
+      finish: "normal",
+      quantityOnHand: 4,
+      quantityReserved: 0,
+      priceArs: 2000
+    }, user);
+    const second = await upsertInventoryItem(db, {
+      sku: "TEST-ORDER-EDIT-002",
+      name: "Eevee Agregable",
+      expansion: "Set Operativo",
+      number: "133",
+      language: "EN",
+      condition: "NM",
+      finish: "normal",
+      quantityOnHand: 3,
+      quantityReserved: 0,
+      priceArs: 3000,
+      priceUsd: 2
+    }, user);
+    const created = await createSale(db, {
+      customerName: "Cliente Editable",
+      saleType: "reservation",
+      channel: "whatsapp",
+      lines: [{ inventoryItemId: first.id, quantity: 1, unitPriceArs: 1800 }]
+    }, user);
+
+    const edited = await updateReservationSaleLines(db, created.id, {
+      lines: [
+        { saleItemId: created.lines[0].saleItemId, quantity: 2, priceCurrency: "ARS", unitPriceArs: 2200 },
+        { inventoryItemId: second.id, quantity: 1, priceCurrency: "USD", unitPriceUsd: 2.5 }
+      ]
+    }, user);
+    assert.equal(edited.lines.length, 2);
+    assert.equal(edited.totalArs, 4400);
+    assert.equal(edited.totalUsd, 2.5);
+    let stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((item) => item.id === first.id)?.quantityReserved, 2);
+    assert.equal(stock.items.find((item) => item.id === second.id)?.quantityReserved, 1);
+
+    const secondLine = edited.lines.find((line) => line.inventoryItemId === second.id)!;
+    const reduced = await updateReservationSaleLines(db, created.id, {
+      lines: [{ saleItemId: secondLine.saleItemId, quantity: 2, priceCurrency: "ARS", unitPriceArs: 1500 }]
+    }, user);
+    assert.equal(reduced.lines.length, 1);
+    assert.equal(reduced.totalArs, 3000);
+    assert.equal(reduced.totalUsd, 0);
+    stock = await listStockForBusiness(db, user.businessId);
+    assert.equal(stock.items.find((item) => item.id === first.id)?.quantityReserved, 0);
+    assert.equal(stock.items.find((item) => item.id === second.id)?.quantityReserved, 2);
+
+    await completeReservationSale(db, created.id, user);
+    await assert.rejects(
+      updateReservationSaleLines(db, created.id, {
+        lines: [{ saleItemId: secondLine.saleItemId, quantity: 1, priceCurrency: "ARS", unitPriceArs: 1500 }]
+      }, user),
+      /Solo se pueden editar ordenes pendientes/
+    );
     await db.close();
   });
 

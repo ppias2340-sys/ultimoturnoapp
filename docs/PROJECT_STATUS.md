@@ -36,7 +36,7 @@ Actualizado: 2026-09-28
   `200` en aproximadamente `933 ms`; la siguiente revalidacion respondio `304`
   en aproximadamente `388 ms`, con cuerpo de `0 bytes`. Antes, cada ciclo
   transferia y parseaba nuevamente unos `2.983.114 bytes` descomprimidos.
-- Verificacion integral posterior: `54/54` pruebas aprobadas, ademas de
+- Verificacion integral posterior: `55/55` pruebas aprobadas, ademas de
   `typecheck`, `lint` y build de produccion.
 
 ### Usuarios con stock propio
@@ -71,6 +71,7 @@ Actualizado: 2026-09-28
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.
 - La edicion manual de cartas del claim usa la API transaccional aislada del driver. Cambiar precio, comprador, cantidad o tags en paralelo ya no abre un `BEGIN/COMMIT` manual compartido ni devuelve `Ya hay una transaccion manual activa`.
 - La carga de stock consulta automaticamente el precio CoolStuff exacto por carta, condicion y acabado. Cuando existe en la cache muestra USD, conversion recomendada a ARS y permite aplicarlo sin reescribir valores; cuando aun no fue relevado ofrece la busqueda oficial ya completada. La consulta esta habilitada tambien para usuarios `stock_owner`.
+- Las ordenes pendientes o a embalar permiten editar sus cartas desde el mismo detalle: agregar stock disponible, quitar lineas, cambiar cantidades y precios ARS/USD o marcar una carta gratis. El servidor recalcula totales y reservas en una unica transaccion, bloquea ediciones de ventas ya pagadas y evita que dos operaciones tomen la misma ultima unidad.
 
 ### Navegacion y sincronizacion
 
