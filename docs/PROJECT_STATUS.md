@@ -11,7 +11,7 @@ Actualizado: 2026-09-28
 - Produccion: `https://ultimoturnoapp-api.vercel.app/`.
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
-- Ultimo commit funcional desplegado y verificado: `54da345`.
+- Ultimo commit funcional enviado a produccion: `d9d860a`.
 - El claim activo de produccion contiene datos reales: no eliminarlo, cancelarlo
   ni recrearlo durante verificaciones.
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
@@ -72,6 +72,7 @@ Actualizado: 2026-09-28
 - La edicion manual de cartas del claim usa la API transaccional aislada del driver. Cambiar precio, comprador, cantidad o tags en paralelo ya no abre un `BEGIN/COMMIT` manual compartido ni devuelve `Ya hay una transaccion manual activa`.
 - La carga de stock consulta automaticamente el precio CoolStuff exacto por carta, condicion y acabado. Cuando existe en la cache muestra USD, conversion recomendada a ARS y permite aplicarlo sin reescribir valores; cuando aun no fue relevado ofrece la busqueda oficial ya completada. La consulta esta habilitada tambien para usuarios `stock_owner`.
 - Las ordenes pendientes o a embalar permiten editar sus cartas desde el mismo detalle: agregar stock disponible, quitar lineas, cambiar cantidades y precios ARS/USD o marcar una carta gratis. El servidor recalcula totales y reservas en una unica transaccion, bloquea ediciones de ventas ya pagadas y evita que dos operaciones tomen la misma ultima unidad.
+- `Cerrar claim` sincroniza stock, crea las ordenes, reserva sus cartas y marca el claim cerrado dentro de una unica transaccion aislada. El servidor bloquea el claim durante el cierre para impedir ordenes duplicadas y la interfaz deshabilita el boton con estado `Cerrando...` mientras espera la respuesta.
 
 ### Navegacion y sincronizacion
 

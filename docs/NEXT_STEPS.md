@@ -7,6 +7,15 @@ Actualizado: 2026-09-28
 
 ## Prioridades vigentes
 
+### Verificar el proximo cierre de claim en produccion
+
+- Pulsar `Cerrar claim` una sola vez y esperar el estado `Cerrando...`; el boton queda bloqueado hasta terminar.
+- Confirmar que la vista navegue a Ordenes y que exista exactamente una orden pendiente por comprador.
+- Verificar que las cartas existentes queden reservadas y las nuevas hayan creado solo las unidades necesarias.
+- Si la conexion se interrumpe, actualizar Claims antes de reintentar: el servidor protege el claim cerrado contra una segunda generacion de ordenes.
+
+Senal de exito: el claim queda cerrado, las ordenes se exportan una sola vez y no aparece `Ya hay una transaccion manual activa`.
+
 ### Pilotear edicion de ordenes
 
 - Abrir una orden pendiente desde el tablero y usar `Editar cartas` para sumar
