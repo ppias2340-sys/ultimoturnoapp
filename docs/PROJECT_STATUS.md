@@ -1,6 +1,6 @@
 # UltimoTurno - estado actual
 
-Actualizado: 2026-09-27
+Actualizado: 2026-09-28
 
 > Esta seccion reemplaza el estado fechado 2026-09-11 que se conserva mas abajo
 > como referencia historica.
@@ -17,7 +17,21 @@ Actualizado: 2026-09-27
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
   solo de frontend y no modificaron la base de ordenes.
 
-## Trabajo completado del 17 al 27 de septiembre
+## Trabajo completado del 17 al 28 de septiembre
+
+### Rendimiento y densidad visual
+
+- `/stock` ahora responde con `ETag` y el frontend revalida la copia ya cargada.
+  Si no hubo cambios, la sincronizacion de 15 segundos recibe `304` sin volver
+  a transferir ni parsear los aproximadamente 3 MB de inventario.
+- Inventario monta inicialmente 24 tarjetas en escritorio y 16 en movil, y
+  continua por bloques al acercarse al final. Las tarjetas fuera de pantalla
+  usan `content-visibility`, reduciendo trabajo de layout y pintura.
+- El propietario deja de repetirse en las mas de mil tarjetas de UltimoTurno;
+  la etiqueta de propiedad aparece solo para stock realmente separado de otra
+  persona.
+- El listado de usuarios y los datos del sector visible se solicitan en
+  paralelo despues de autenticar, eliminando una espera serial del arranque.
 
 ### Usuarios con stock propio
 

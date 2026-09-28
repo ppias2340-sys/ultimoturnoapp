@@ -31,6 +31,11 @@
   font-weight: 800;
 }
 
+.inventory-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 260px 390px;
+}
+
 .user-management-panel {
   display: grid;
   gap: 14px;

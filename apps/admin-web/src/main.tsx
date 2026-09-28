@@ -949,6 +949,7 @@ const fallbackBlueRateSell = 1540;
 const minimumSalePriceArs = 800;
 const catalogPickerSearchCache = new Map<string, { expiresAt: number; entries: PriceChartingCacheEntry[]; totalEntries: number }>();
 const catalogPickerSearchCacheTtlMs = 5 * 60 * 1000;
+const revalidatedApiCache = new Map<string, { etag: string; payload: unknown }>();
 const exampleSnapshotCsv = `sku,name,expansion,number,language,condition,finish,gradingCompany,grade,gradingCert,location,quantityOnHand,quantityReserved,priceArs,priceUsd
 UT-CSV-HORSEA-AQ-EN-NM,Horsea,Aquapolis,85,EN,NM,normal,,,,Caja agua C,2,0,4500,3.6
 ,Flareon EX,Generations,RC28,EN,NM,normal,,,,Caja fuego A,1,0,180000,117
@@ -1068,11 +1069,9 @@ function App() {
     const ownerRestricted = nextRoles.includes("stock_owner") && !nextRoles.includes("admin");
     const targetView = ownerRestricted && view !== "inventory" && view !== "stock-intake" ? "inventory" : view;
     setUserRoles(nextRoles);
-    if (nextRoles.includes("admin")) {
-      setManagedUsers((await api<{ users: ManagedUser[] }>("/users")).users);
-    } else {
-      setManagedUsers([{ id: me.user.id, displayName: me.user.displayName, email: "", active: true, roles: nextRoles, createdAt: "" }]);
-    }
+    const managedUsersRequest = nextRoles.includes("admin")
+      ? api<{ users: ManagedUser[] }>("/users").then((result) => setManagedUsers(result.users))
+      : Promise.resolve(setManagedUsers([{ id: me.user.id, displayName: me.user.displayName, email: "", active: true, roles: nextRoles, createdAt: "" }]));
     setEnvironment(nextEnvironment);
     setBlueRate(rate);
 
@@ -1087,7 +1086,7 @@ function App() {
       setView(targetView);
       window.history.replaceState({}, "", viewPaths[targetView]);
     }
-    await refreshViewData(targetView);
+    await Promise.all([refreshViewData(targetView), managedUsersRequest]);
   }
 
   async function refresh() {
@@ -1192,6 +1191,7 @@ function App() {
     setAccessChecking(true);
     try {
       const result = await api<{ token: string; user: { id: string; displayName: string; roles: string[] } }>("/auth/login", { method: "POST", body: loginCredentials, skipSession: true });
+      revalidatedApiCache.clear();
       writeLocalStorage(adminSessionTokenKey, result.token);
       clearStoredAccessKey();
       setUserId(result.user.id);
@@ -2519,6 +2519,7 @@ function App() {
   const restrictedStockOwner = userRoles.includes("stock_owner") && !userRoles.includes("admin");
   const logoutPanel = async () => {
     await api("/auth/logout", { method: "POST" }).catch(() => undefined);
+    revalidatedApiCache.clear();
     removeLocalStorage(adminSessionTokenKey);
     clearStoredAccessKey();
     window.location.assign(viewPaths.inventory);
@@ -3281,18 +3282,19 @@ function InventoryView(props: {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sideTab, setSideTab] = useState<"detail" | "cart" | null>(null);
   const [intakeId, setIntakeId] = useState("");
-  const [renderLimit, setRenderLimit] = useState(48);
+  const inventoryPageSize = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches ? 16 : 24;
+  const [renderLimit, setRenderLimit] = useState(inventoryPageSize);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const filterKey = JSON.stringify(filters);
-  useEffect(() => { setRenderLimit(48); }, [filterKey]);
+  useEffect(() => { setRenderLimit(inventoryPageSize); }, [filterKey, inventoryPageSize]);
   useEffect(() => {
     if (!loadMoreRef.current || renderLimit >= items.length) return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) setRenderLimit((limit) => Math.min(items.length, limit + 48));
+      if (entries.some((entry) => entry.isIntersecting)) setRenderLimit((limit) => Math.min(items.length, limit + inventoryPageSize));
     }, { rootMargin: "300px" });
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
-  }, [items.length, renderLimit]);
+  }, [inventoryPageSize, items.length, renderLimit]);
   useEffect(() => {
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setSideTab(null); setIntakeId(""); } };
     window.addEventListener("keydown", close);
@@ -3489,7 +3491,7 @@ function InventoryView(props: {
                       </div>
                       <div className="inventory-card-body">
                         <strong>{item.product.name}</strong>
-                        <span className="inventory-owner-label">Stock: {item.ownerName || "UltimoTurno"}</span>
+                        {item.ownerUserId ? <span className="inventory-owner-label">Stock: {item.ownerName}</span> : null}
                         <span>{item.product.expansion} #{item.product.number || "-"}</span>
                         <small>{inventoryVariantLabel(item)}</small>
                         <div className={`inventory-tag-list compact ${itemTags.length ? "" : "empty"}`}>{itemTags.map((tag) => <span key={tag}>{tag}</span>)}</div>
@@ -3512,7 +3514,7 @@ function InventoryView(props: {
               })}
             </div>
           ) : <EmptyState title="Sin coincidencias" body="Proba otro nombre, expansion o numero, o revisa los filtros." />}
-          {renderLimit < items.length ? <div className="inventory-load-more" ref={loadMoreRef}><button className="secondary-action" onClick={() => setRenderLimit((limit) => limit + 48)}>Ver mas cartas ({Math.min(renderLimit, items.length)} de {items.length})</button></div> : null}
+          {renderLimit < items.length ? <div className="inventory-load-more" ref={loadMoreRef}><button className="secondary-action" onClick={() => setRenderLimit((limit) => limit + inventoryPageSize)}>Ver mas cartas ({Math.min(renderLimit, items.length)} de {items.length})</button></div> : null}
         </section>
 
         {sideTab ? <aside className={`workspace-side inventory-detail-drawer ${sideTab === "cart" ? "cart-drawer" : "detail-drawer"}`} role="dialog" aria-label={sideTab === "detail" ? "Detalles de la carta" : "Carrito"}>
@@ -7862,15 +7864,19 @@ async function api<T>(path: string, options: { token?: string; method?: string; 
   const sessionToken = options.skipSession ? "" : readLocalStorage(adminSessionTokenKey);
   const requestUrl = buildApiRequestUrl(path);
   const method = options.method || "GET";
+  const revalidationKey = method === "GET" && path === "/stock" ? `${path}:${sessionToken}` : "";
+  const cached = revalidationKey ? revalidatedApiCache.get(revalidationKey) : undefined;
   const response = await fetch(requestUrl, {
     method,
     headers: {
       "Content-Type": "application/json",
+      ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
       ...(options.token || sessionToken ? { Authorization: `Bearer ${options.token || sessionToken}` } : {})
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
     signal: options.signal
   });
+  if (response.status === 304 && cached) return cached.payload as T;
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = String(payload.error || response.statusText || `Error ${response.status}`);
@@ -7878,6 +7884,9 @@ async function api<T>(path: string, options: { token?: string; method?: string; 
     (error as Error & { status?: number }).status = response.status;
     throw error;
   }
+  const etag = response.headers.get("etag") || "";
+  if (revalidationKey && etag) revalidatedApiCache.set(revalidationKey, { etag, payload });
+  if (method !== "GET") revalidatedApiCache.clear();
   return payload as T;
 }
 

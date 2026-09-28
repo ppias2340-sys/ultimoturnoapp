@@ -2845,6 +2845,30 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
   response.end(compressed);
 }
 
+function sendRevalidatedJson(response: ServerResponse, payload: unknown) {
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  const etag = `"${crypto.createHash("sha1").update(body).digest("base64url").slice(0, 20)}"`;
+  const requestHeader = response.req?.headers["if-none-match"];
+  const requestEtags = (Array.isArray(requestHeader) ? requestHeader.join(",") : requestHeader || "")
+    .split(",")
+    .map((value) => value.trim());
+  if (requestEtags.includes(etag)) {
+    response.writeHead(304, { "Cache-Control": "private, no-cache", ETag: etag });
+    response.end();
+    return;
+  }
+  const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/i.test(String(response.req?.headers["accept-encoding"] || ""));
+  const compressed = acceptsGzip && body.length >= 1_024 ? gzipSync(body, { level: 6 }) : body;
+  response.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "private, no-cache",
+    "Content-Length": String(compressed.length),
+    ETag: etag,
+    ...(compressed !== body ? { "Content-Encoding": "gzip", "Vary": "Accept-Encoding" } : {})
+  });
+  response.end(compressed);
+}
+
 function sendBuffer(response: ServerResponse, statusCode: number, body: Buffer, contentType: string, omitBody = false) {
   response.writeHead(statusCode, {
     "Content-Type": contentType,
@@ -4143,7 +4167,7 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
     }
 
     if (url.pathname === "/stock" && request.method === "GET") {
-      sendJson(response, 200, user.roles?.includes("stock_owner") && !user.roles.includes("admin") ? await listStockForActor(db, user) : await readStockForRequest(db, user.businessId));
+      sendRevalidatedJson(response, user.roles?.includes("stock_owner") && !user.roles.includes("admin") ? await listStockForActor(db, user) : await readStockForRequest(db, user.businessId));
       return;
     }
 
