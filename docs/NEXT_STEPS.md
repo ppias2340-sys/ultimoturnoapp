@@ -11,7 +11,7 @@ Actualizado: 2026-09-28
 
 - Pulsar `Cerrar claim` una sola vez y esperar el estado `Cerrando...`; el boton queda bloqueado hasta terminar.
 - Confirmar que la vista navegue a Ordenes y que exista exactamente una orden pendiente por comprador.
-- Verificar que las cartas existentes queden reservadas y las nuevas hayan creado solo las unidades necesarias.
+- Verificar que las cartas existentes queden reservadas; si alguna no tiene disponibilidad, debe crear solo el faltante y reservarlo. Las cartas nuevas deben crear solo las unidades necesarias.
 - Si la conexion se interrumpe, actualizar Claims antes de reintentar: el servidor protege el claim cerrado contra una segunda generacion de ordenes.
 
 Senal de exito: el claim queda cerrado, las ordenes se exportan una sola vez y no aparece `Ya hay una transaccion manual activa`.
