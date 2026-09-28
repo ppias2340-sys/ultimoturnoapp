@@ -1,6 +1,6 @@
 # UltimoTurno - proximos pasos
 
-Actualizado: 2026-09-27
+Actualizado: 2026-09-28
 
 > Las prioridades vigentes estan en esta primera seccion. El plan del
 > 2026-09-11 se conserva debajo como referencia historica.
@@ -50,13 +50,19 @@ reescribir todo el catalogo.
   volver a una carga global para ocultar datos faltantes.
 - Vigilar errores de pool durante varias sesiones simultaneas. Las respuestas
   grandes deben conservar `Content-Encoding: gzip`.
-- Si Inventario sigue siendo lento con los `344 KB` comprimidos actuales,
-  implementar listado paginado/resumido y cargar detalles bajo demanda en vez
-  de enviar todos los campos de los 1.300+ SKUs.
+- `/stock` ya revalida con `ETag`: una medicion productiva dio `200` en unos
+  `933 ms` para la primera carga y `304` en unos `388 ms` y `0 bytes` para el
+  siguiente ciclo sin cambios. Confirmar que varias sesiones mantengan esta
+  conducta y no vuelvan a procesar el cuerpo completo.
+- Si la primera apertura de Inventario sigue siendo lenta, el siguiente cambio
+  grande es un listado paginado/resumido con detalles bajo demanda. No reducir
+  la cache compartida de 15 segundos: evita que varias personas reconstruyan
+  al mismo tiempo los mas de 2.000 SKUs.
 
 Senal de exito: Cargar stock abre en menos de un segundo con conexion caliente,
-las busquedas normales responden cerca de un segundo y ninguna vista genera una
-rafaga de APIs ajenas al sector.
+las busquedas normales responden cerca de un segundo, las sincronizaciones sin
+cambios reciben `304` y ninguna vista genera una rafaga de APIs ajenas al
+sector.
 
 ### Activar y pilotear el planificador de claims
 

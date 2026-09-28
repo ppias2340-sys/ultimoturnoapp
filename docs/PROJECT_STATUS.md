@@ -11,7 +11,7 @@ Actualizado: 2026-09-28
 - Produccion: `https://ultimoturnoapp-api.vercel.app/`.
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
-- Ultimo commit funcional desplegado y verificado: `08a2e0c`.
+- Ultimo commit funcional desplegado y verificado: `e02683f`.
 - El claim activo de produccion contiene datos reales: no eliminarlo, cancelarlo
   ni recrearlo durante verificaciones.
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
@@ -32,6 +32,12 @@ Actualizado: 2026-09-28
   persona.
 - El listado de usuarios y los datos del sector visible se solicitan en
   paralelo despues de autenticar, eliminando una espera serial del arranque.
+- Medicion productiva del 2026-09-28: la primera lectura de `/stock` respondio
+  `200` en aproximadamente `933 ms`; la siguiente revalidacion respondio `304`
+  en aproximadamente `388 ms`, con cuerpo de `0 bytes`. Antes, cada ciclo
+  transferia y parseaba nuevamente unos `2.983.114 bytes` descomprimidos.
+- Verificacion integral posterior: `52/52` pruebas aprobadas, ademas de
+  `typecheck`, `lint` y build de produccion.
 
 ### Usuarios con stock propio
 
