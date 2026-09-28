@@ -71,6 +71,7 @@ type InventoryBatchPatch = {
 };
 type CardIndexFilter = "all" | "matched" | "pending_review" | "weak_match" | "conflict" | "pricecharting_only" | "missing_tcg" | "missing_image" | "approved" | "rejected" | "manual";
 type OrderFilter = "all" | "pending" | "packed" | "paid" | "debt" | "no_message" | "message" | "note";
+type OrderSort = "current" | "money_desc" | "money_asc" | "units_desc" | "units_asc";
 type InventoryFilters = {
   query: string;
   expansion: string;
@@ -4301,6 +4302,7 @@ function OrdersView(props: Parameters<typeof OrdersListView>[0]) {
   const [workspace,setWorkspace] = useState<OrderWorkspace | null>(null);
   const [boardId,setBoardId] = useState("");
   const [query,setQuery] = useState("");
+  const [orderSort,setOrderSort] = useState<OrderSort>("current");
   const [history,setHistory] = useState(false);
   const [list,setList] = useState(false);
   const [error,setError] = useState("");
@@ -4349,6 +4351,19 @@ function OrdersView(props: Parameters<typeof OrdersListView>[0]) {
     if (!order.messageSentAt) return "contact";
     if (debt > 0) return "debt";
     return "pending";
+  };
+  const compareOrderCards = (left: SaleRecord, right: SaleRecord) => {
+    const manual = (cardMap.get(left.id)?.position ?? -1) - (cardMap.get(right.id)?.position ?? -1) || left.createdAt.localeCompare(right.createdAt);
+    if (orderSort === "current") return manual;
+    const leftUnits = left.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const rightUnits = right.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const leftMoney = left.totalArs + toBlueArs(left.totalUsd, props.blueRate);
+    const rightMoney = right.totalArs + toBlueArs(right.totalUsd, props.blueRate);
+    const difference = orderSort === "money_desc" ? rightMoney - leftMoney
+      : orderSort === "money_asc" ? leftMoney - rightMoney
+        : orderSort === "units_desc" ? rightUnits - leftUnits
+          : leftUnits - rightUnits;
+    return difference || manual;
   };
   const refreshBoards = () => window.setTimeout(load, 120);
   function moveCardLocally(current: OrderWorkspace, saleId: string, columnId: string, beforeSaleId?: string): OrderWorkspace {
@@ -4406,7 +4421,7 @@ function OrdersView(props: Parameters<typeof OrdersListView>[0]) {
   if(list) return <><button className="secondary-action" onClick={()=>setList(false)}>Volver a tableros</button><OrdersListView {...props}/></>;
   return <section className="view trello-orders">
     <header className="panel trello-toolbar">
-      <div className="trello-heading"><div className="trello-title-block"><h2>Ordenes</h2><span>{selectedBoard?.name || "Tablero"} · {orders.length}/{allOrders.length} visibles</span></div><label className="trello-search"><Icon name="search" /><input aria-label="Buscar ordenes" placeholder="Buscar comprador, carta o nota" value={query} onChange={e=>setQuery(e.target.value)}/></label><label className="trello-history"><input type="checkbox" checked={history} onChange={e=>setHistory(e.target.checked)}/>Entregadas</label><button className="secondary-action" onClick={()=>setList(true)}>Vista de lista</button></div>
+      <div className="trello-heading"><div className="trello-title-block"><h2>Ordenes</h2><span>{selectedBoard?.name || "Tablero"} · {orders.length}/{allOrders.length} visibles</span></div><label className="trello-search"><Icon name="search" /><input aria-label="Buscar ordenes" placeholder="Buscar comprador, carta o nota" value={query} onChange={e=>setQuery(e.target.value)}/></label><select className="trello-sort" aria-label="Ordenar ordenes" value={orderSort} onChange={e=>setOrderSort(e.target.value as OrderSort)}><option value="current">Orden del tablero</option><option value="money_desc">Mayor importe</option><option value="money_asc">Menor importe</option><option value="units_desc">Mas cartas</option><option value="units_asc">Menos cartas</option></select><label className="trello-history"><input type="checkbox" checked={history} onChange={e=>setHistory(e.target.checked)}/>Entregadas</label><button className="secondary-action" onClick={()=>setList(true)}>Vista de lista</button></div>
       <nav className="trello-tabs" aria-label="Tableros de ordenes">{workspace?.boards.map(board=>{
         const first=workspace.columns.find(c=>c.boardId===board.id);
         const count=props.sales.filter(s=>s.saleType==="reservation" && boardShowsSale(board,s) && workspace.columns.some(c=>c.boardId===board.id && c.id===columnOf(s.id))).length;
@@ -4420,7 +4435,7 @@ function OrdersView(props: Parameters<typeof OrdersListView>[0]) {
     </header>
     {!workspace && !error && <p>Cargando tableros...</p>}
     <div className="trello-board" aria-label={selectedBoard?.name}>{columns.map(column=>{
-      const cards=orders.filter(s=>columnOf(s.id)===column.id).sort((a,b)=>(cardMap.get(a.id)?.position ?? -1)-(cardMap.get(b.id)?.position ?? -1) || a.createdAt.localeCompare(b.createdAt));
+      const cards=orders.filter(s=>columnOf(s.id)===column.id).sort(compareOrderCards);
       return <section key={column.id} className={`trello-column ${over===column.id?"drag-over":""}`} aria-label={column.name} onDragOver={e=>{if(!busy){e.preventDefault();setOver(column.id);}}} onDrop={e=>{if(!busy)drop(e,column.id);}}>
         <header><h3>{column.name} <span>{cards.length}</span></h3><button aria-label={`Renombrar columna ${column.name}`} onClick={()=>setEditor({action:"renameColumn",id:column.id,name:column.name})}>···</button></header>
         <div className="trello-cards">{cards.map(order=>{
@@ -4448,6 +4463,7 @@ function OrdersListView({ sales, claims, stockItems, blueRate, onComplete, onCan
   const deliveredOrders = reservations.filter((sale) => sale.status === "delivered");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderFilter, setOrderFilter] = useState<OrderFilter>("all");
+  const [orderSort, setOrderSort] = useState<OrderSort>("current");
   const [selectedBoard, setSelectedBoard] = useState("all");
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [batchDueDate, setBatchDueDate] = useState("");
@@ -4522,7 +4538,18 @@ function OrdersListView({ sales, claims, stockItems, blueRate, onComplete, onCan
     return true;
   };
   const boardOrders = orders.filter((order) => matchesBoard(order) && matchesOrderSearch(order));
-  const visibleOrders = boardOrders.filter((order) => matchesOrderFilter(order, orderFilter));
+  const visibleOrders = boardOrders.filter((order) => matchesOrderFilter(order, orderFilter)).sort((left, right) => {
+    if (orderSort === "current") return 0;
+    const leftUnits = left.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const rightUnits = right.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const leftMoney = left.totalArs + toBlueArs(left.totalUsd, blueRate);
+    const rightMoney = right.totalArs + toBlueArs(right.totalUsd, blueRate);
+    const difference = orderSort === "money_desc" ? rightMoney - leftMoney
+      : orderSort === "money_asc" ? leftMoney - rightMoney
+        : orderSort === "units_desc" ? rightUnits - leftUnits
+          : leftUnits - rightUnits;
+    return difference || new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
   const visibleDebtArs = boardOrders.reduce((sum, order) => sum + Math.max(0, order.totalArs - (order.amountPaidArs || 0)), 0);
   const visibleMessagePending = boardOrders.filter((order) => !order.messageSentAt).length;
   const visiblePaidReady = boardOrders.filter((order) => order.status === "paid").length;
@@ -4564,7 +4591,7 @@ function OrdersListView({ sales, claims, stockItems, blueRate, onComplete, onCan
       <div className="panel orders-header-panel">
         <div className="orders-title"><h2>Ordenes</h2><p className="muted">Ejecucion diaria: contactar, cobrar, embalar y entregar sin saltar de pantalla.</p></div>
         <div className="orders-tools">
-          <label className="orders-search"><Icon name="search" /><input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Buscar comprador o carta" /></label>
+          <div className="orders-search-row"><label className="orders-search"><Icon name="search" /><input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Buscar comprador o carta" /></label><select className="orders-sort" aria-label="Ordenar ordenes" value={orderSort} onChange={(event) => setOrderSort(event.target.value as OrderSort)}><option value="current">Orden actual</option><option value="money_desc">Mayor importe</option><option value="money_asc">Menor importe</option><option value="units_desc">Mas cartas</option><option value="units_asc">Menos cartas</option></select></div>
           <div className="order-board-tabs">{orderBoards.map((board) => <button className={selectedBoard === board.id ? "active" : ""} key={board.id} onClick={() => setSelectedBoard(board.id)}>{board.label}<span>{board.count}</span></button>)}</div>
           <div className="orders-filters">{orderFilterOptions.map((option) => <button className={`secondary-action filter-toggle ${orderFilter === option.value ? "active" : ""}`} key={option.value} onClick={() => setOrderFilter(option.value)}>{option.label} <span>{filterCounts.get(option.value) || 0}</span></button>)}</div>
         </div>

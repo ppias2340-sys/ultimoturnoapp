@@ -2970,6 +2970,18 @@ select option {
   min-width: 0;
 }
 
+.orders-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
+  gap: 8px;
+}
+
+.orders-sort,
+.trello-sort {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
 .orders-color-guide {
   display: flex;
   align-items: center;
@@ -11811,7 +11823,7 @@ main:has(.trello-orders) .operations-dock { display:none; }
 
 .trello-heading {
   display: grid;
-  grid-template-columns: minmax(190px, 0.36fr) minmax(280px, 1fr) auto auto;
+  grid-template-columns: minmax(190px, 0.36fr) minmax(280px, 1fr) minmax(155px, 190px) auto auto;
   gap: 10px;
   align-items: center;
 }
@@ -12152,7 +12164,7 @@ main:has(.trello-orders) .operations-dock { display:none; }
 }
 
 .orders-mode .trello-heading {
-  grid-template-columns: minmax(160px, 0.28fr) minmax(300px, 1fr) auto auto;
+  grid-template-columns: minmax(160px, 0.28fr) minmax(300px, 1fr) minmax(150px, 180px) auto auto;
   gap: 8px;
 }
 
@@ -12172,6 +12184,12 @@ main:has(.trello-orders) .operations-dock { display:none; }
 .orders-mode .trello-search input {
   min-height: 34px;
   font-size: 13px;
+}
+
+.orders-mode .trello-sort {
+  min-height: 34px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .orders-mode .trello-history {
@@ -12260,7 +12278,8 @@ main:has(.trello-orders) .operations-dock { display:none; }
   }
 
   .trello-title-block,
-  .trello-search {
+  .trello-search,
+  .trello-sort {
     grid-column: 1 / -1;
   }
 
@@ -12280,8 +12299,13 @@ main:has(.trello-orders) .operations-dock { display:none; }
   }
 
   .trello-history,
-  .trello-heading > .secondary-action {
+  .trello-heading > .secondary-action,
+  .trello-sort {
     width: 100%;
+  }
+
+  .orders-search-row {
+    grid-template-columns: 1fr;
   }
 
   .trello-work-summary {
