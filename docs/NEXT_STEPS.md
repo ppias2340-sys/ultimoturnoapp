@@ -66,6 +66,11 @@ sector.
 
 ### Activar y pilotear el planificador de claims
 
+- Verificar visualmente en el proximo cierre real que las cartas existentes
+  pasen a `Reservadas` sin aumentar el total en mano, y que las inexistentes
+  creen solo la cantidad indicada por el claim.
+- Confirmar al cobrar una de esas ordenes que la reserva vuelva a cero y la
+  cantidad en mano baje exactamente por la cantidad vendida.
 - Configurar `OPENAI_API_KEY` en Vercel para habilitar el asistente; no guardar
   la clave en Git ni exponerla al frontend.
 - Crear un borrador real, sumar cartas manualmente y comprobar que el stock no

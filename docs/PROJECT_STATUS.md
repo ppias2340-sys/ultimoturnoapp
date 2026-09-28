@@ -11,7 +11,7 @@ Actualizado: 2026-09-28
 - Produccion: `https://ultimoturnoapp-api.vercel.app/`.
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
-- Ultimo commit funcional desplegado y verificado: `e02683f`.
+- Ultimo commit funcional desplegado y verificado: `2ef3cd9`.
 - El claim activo de produccion contiene datos reales: no eliminarlo, cancelarlo
   ni recrearlo durante verificaciones.
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
@@ -141,6 +141,21 @@ Actualizado: 2026-09-28
 
 ### Claims, catalogo y stock
 
+- Las cartas agregadas a un claim reutilizan el SKU existente sin aumentar
+  `quantity_on_hand`. Solo se crea stock cuando la carta/variante realmente no
+  existia en inventario.
+- Al cerrar el claim, cada linea vendida pasa a una orden pendiente y aumenta
+  `quantity_reserved`; la unidad sigue en mano pero deja de estar disponible.
+  Al cobrar la orden, baja `quantity_on_hand`, se libera la reserva y la venta
+  queda pagada.
+- Se corrigio la clasificacion historica `claim_added` que habia sumado stock
+  sobre SKUs existentes. La reconciliacion productiva del claim del 27 de
+  septiembre reviso 242 tarjetas y retiro 185 unidades duplicadas de 108
+  tarjetas. Una segunda ejecucion devolvio 0 correcciones, confirmando que es
+  idempotente.
+- Agregar una carta al claim sincroniza solamente las tarjetas tocadas, no las
+  242 tarjetas del claim completo. La reparacion masiva usa operaciones por
+  lote y termino en produccion en aproximadamente `1,4 s`.
 - Inventario muestra un acceso permanente al carrito mediante un icono con
   contador en la barra superior. La apertura solicitada por `Cobrar ahora` se
   consume una sola vez, por lo que volver a Inventario ya no reabre el panel.
