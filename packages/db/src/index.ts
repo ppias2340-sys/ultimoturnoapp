@@ -6046,21 +6046,29 @@ export async function closeActiveClaim(db: PGlite, actor: AuthenticatedUser): Pr
   if (!claim) throw new Error("No hay un claim activo.");
   const orderPlan = buildClaimOrderPlan(workspace);
   const saleIds: string[] = [];
-  await db.exec("begin");
-  try {
-    for (const card of workspace.cards) await syncClaimCardStock(db, card.id, actor);
+  await inventoryTransaction(db, async (connection) => {
+    const lockedClaim = await connection.query<{ status: string }>(`
+      select status
+      from claim_sessions
+      where id = $1 and business_id = $2
+      for update
+    `, [claim.id, actor.businessId]);
+    if (lockedClaim.rows[0]?.status !== "open") {
+      throw new Error("El claim ya fue cerrado. Actualiza la vista para ver las ordenes.");
+    }
+    for (const card of workspace.cards) await syncClaimCardStock(connection, card.id, actor);
     for (const buyerOrder of orderPlan.buyers) {
       const saleId = crypto.randomUUID();
       saleIds.push(saleId);
-      await db.query(`
+      await connection.query(`
         insert into sales (id, business_id, customer_name, sale_type, status, channel, total_ars, total_usd, payment_due_at, created_by)
         values ($1, $2, $3, 'reservation', 'pending', 'claim', $4, $5, nullif($6, '')::date, $7)
       `, [saleId, actor.businessId, buyerOrder.buyer, buyerOrder.totalArs, buyerOrder.totalUsd, claim.paymentDueAt || "", actor.id]);
       let lineIndex = 1;
       for (const line of buyerOrder.lines.filter((item): item is ClaimOrderPlanCardLine => item.kind === "card")) {
-        const inventoryItemId = await reserveInventoryForClaimCard(db, claim.id, line.card, saleId, buyerOrder.buyer, line.quantity, actor);
+        const inventoryItemId = await reserveInventoryForClaimCard(connection, claim.id, line.card, saleId, buyerOrder.buyer, line.quantity, actor);
         const priceCurrency = line.unitPriceUsd > 0 && line.unitPriceArs <= 0 ? "USD" : "ARS";
-        await db.query(`
+        await connection.query(`
           insert into sale_items (
             id, business_id, sale_id, inventory_item_id, quantity, unit_price_ars, unit_price_usd,
             line_total_ars, line_total_usd, price_currency, display_name, sku_snapshot, source_reference
@@ -6083,7 +6091,7 @@ export async function closeActiveClaim(db: PGlite, actor: AuthenticatedUser): Pr
         ]);
       }
       for (const line of buyerOrder.lines.filter((item): item is ClaimOrderPlanFreeLine => item.kind === "free")) {
-        await db.query(`
+        await connection.query(`
           insert into sale_items (
             id, business_id, sale_id, inventory_item_id, quantity, unit_price_ars, unit_price_usd,
             line_total_ars, line_total_usd, price_currency, display_name, sku_snapshot, source_reference
@@ -6100,14 +6108,10 @@ export async function closeActiveClaim(db: PGlite, actor: AuthenticatedUser): Pr
         ]);
       }
     }
-    await db.query("update claim_cards set status = 'sold', updated_at = now() where claim_id = $1 and business_id = $2 and nullif(buyer, '') is not null and status <> 'ignored'", [claim.id, actor.businessId]);
-    await db.query("update claim_sessions set status = 'closed', closed_at = now(), updated_at = now(), closed_sale_ids = $1::jsonb where id = $2 and business_id = $3", [JSON.stringify(saleIds), claim.id, actor.businessId]);
-    await writeAudit(db, actor, "claim.close", "claim", claim.id, workspace, { saleIds });
-    await db.exec("commit");
-  } catch (error) {
-    await db.exec("rollback");
-    throw error;
-  }
+    await connection.query("update claim_cards set status = 'sold', updated_at = now() where claim_id = $1 and business_id = $2 and nullif(buyer, '') is not null and status <> 'ignored'", [claim.id, actor.businessId]);
+    await connection.query("update claim_sessions set status = 'closed', closed_at = now(), updated_at = now(), closed_sale_ids = $1::jsonb where id = $2 and business_id = $3", [JSON.stringify(saleIds), claim.id, actor.businessId]);
+    await writeAudit(connection, actor, "claim.close", "claim", claim.id, workspace, { saleIds });
+  });
   return listClaimsWorkspace(db, actor.businessId);
 }
 

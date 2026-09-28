@@ -581,7 +581,15 @@ describe("operational inventory database", () => {
     assert.equal(workspace.summary.totalArs, 9000);
     assert.equal(workspace.summary.totalUsd, 300);
     assert.equal(workspace.summary.claimTotalUsd, 450);
-    workspace = await closeActiveClaim(db, user);
+    const closeResults = await Promise.allSettled([
+      closeActiveClaim(db, user),
+      closeActiveClaim(db, user)
+    ]);
+    assert.equal(closeResults.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(closeResults.filter((result) => result.status === "rejected").length, 1);
+    const rejectedClose = closeResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    assert.doesNotMatch(String(rejectedClose?.reason), /transaccion manual activa/i);
+    workspace = await listClaimsWorkspace(db, user.businessId);
     assert.equal(workspace.activeClaim, null);
 
     const sales = await listSales(db, user.businessId);

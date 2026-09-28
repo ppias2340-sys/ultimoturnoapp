@@ -1024,6 +1024,7 @@ function App() {
   const [claimImageSearching, setClaimImageSearching] = useState(false);
   const [claimCardImageSearching, setClaimCardImageSearching] = useState("");
   const [claimPriceRefreshing, setClaimPriceRefreshing] = useState(false);
+  const [claimClosing, setClaimClosing] = useState(false);
   const [priceChartingImageBackfillRunning, setPriceChartingImageBackfillRunning] = useState(false);
   const [priceChartingImageResumeAt, setPriceChartingImageResumeAt] = useState("");
   const [priceChartingImageLastBatch, setPriceChartingImageLastBatch] = useState<ImageBatchResult | null>(null);
@@ -1933,6 +1934,8 @@ function App() {
   }
 
   async function closeClaim() {
+    if (claimClosing) return;
+    setClaimClosing(true);
     try {
       const result = await api<ClaimsWorkspace>("/claims/close", { method: "POST" });
       setClaims(result);
@@ -1941,6 +1944,8 @@ function App() {
       setView("orders");
     } catch (nextError) {
       showError(nextError);
+    } finally {
+      setClaimClosing(false);
     }
   }
 
@@ -2765,7 +2770,7 @@ function App() {
         />
       ) : null}
 
-      {view === "claims" ? <ClaimsView workspace={claims} stockItems={stock.items} priceChartingCache={priceChartingCache} blueRate={blueRate} claimImageSearching={claimImageSearching} claimCardImageSearching={claimCardImageSearching} claimPriceRefreshing={claimPriceRefreshing} onCreateClaim={(name) => void createClaim(name)} onUpdateClaimSettings={(patch) => void updateClaimSettings(patch)} onSearchPriceCharting={(search, languageGroup) => void searchPriceChartingCache(search, languageGroup)} onAddCards={(ids, sectionId, cards) => void addClaimCards(ids, sectionId, cards)} onUpdateCard={(cardId, patch) => void updateClaimCard(cardId, patch)} onDeleteCard={(cardId) => void deleteClaimCard(cardId)} onSearchCardImage={(cardId) => void searchClaimCardImage(cardId)} onCreateSection={(name) => void createClaimSection(name)} onUpdateSection={(sectionId, patch) => void updateClaimSection(sectionId, patch)} onDeleteSection={(sectionId) => void deleteClaimSection(sectionId)} onAddFree={(input) => void addClaimFree(input)} onExportClaimCsv={() => exportClaimWorkspaceCsv(claims)} onExportOrders={() => void exportClaimOrdersPreview()} onGenerateGrid={() => void generateClaimGrid()} onSearchClaimImages={() => void searchClaimImages()} onRefreshClaimPrices={() => void refreshClaimPrices()} onStartLive={() => setView("claim-live")} onCloseClaim={() => void closeClaim()} onArchiveClaim={() => void archiveClaim()} /> : null}
+      {view === "claims" ? <ClaimsView workspace={claims} stockItems={stock.items} priceChartingCache={priceChartingCache} blueRate={blueRate} claimImageSearching={claimImageSearching} claimCardImageSearching={claimCardImageSearching} claimPriceRefreshing={claimPriceRefreshing} claimClosing={claimClosing} onCreateClaim={(name) => void createClaim(name)} onUpdateClaimSettings={(patch) => void updateClaimSettings(patch)} onSearchPriceCharting={(search, languageGroup) => void searchPriceChartingCache(search, languageGroup)} onAddCards={(ids, sectionId, cards) => void addClaimCards(ids, sectionId, cards)} onUpdateCard={(cardId, patch) => void updateClaimCard(cardId, patch)} onDeleteCard={(cardId) => void deleteClaimCard(cardId)} onSearchCardImage={(cardId) => void searchClaimCardImage(cardId)} onCreateSection={(name) => void createClaimSection(name)} onUpdateSection={(sectionId, patch) => void updateClaimSection(sectionId, patch)} onDeleteSection={(sectionId) => void deleteClaimSection(sectionId)} onAddFree={(input) => void addClaimFree(input)} onExportClaimCsv={() => exportClaimWorkspaceCsv(claims)} onExportOrders={() => void exportClaimOrdersPreview()} onGenerateGrid={() => void generateClaimGrid()} onSearchClaimImages={() => void searchClaimImages()} onRefreshClaimPrices={() => void refreshClaimPrices()} onStartLive={() => setView("claim-live")} onCloseClaim={() => void closeClaim()} onArchiveClaim={() => void archiveClaim()} /> : null}
       {view === "claim-planner" ? <ClaimPlannerView plansData={claimPlans} stockItems={stock.items} activeClaim={claims.activeClaim} onCreatePlan={createClaimPlanDraft} onUpdatePlan={updateClaimPlanDraft} onSaveItems={saveClaimPlanItems} onRemoveItem={removeClaimPlanItem} onGenerateProposal={generateClaimPlanProposal} onPublish={publishClaimPlanDraft} onError={showError} /> : null}
       {view === "claim-live" ? <ClaimLiveView workspace={claims} blueRate={blueRate} onGoClaims={() => setView("claims")} /> : null}
       {view === "orders" ? <OrdersView sales={sales} claims={claims} stockItems={stock.items} blueRate={blueRate} onComplete={(id) => updateOrder(id, "complete")} onCancel={(id) => updateOrder(id, "cancel")} onPacked={(id) => updateOrder(id, "packed")} onDelivered={(id) => updateOrder(id, "delivered")} onPayment={updateOrderPayment} onNote={updateOrderNote} onMessageSent={updateOrderMessageSent} onLinePacked={updateOrderLinePacked} onLines={updateOrderLines} /> : null}
@@ -5073,6 +5078,7 @@ function ClaimsView(props: {
   claimImageSearching: boolean;
   claimCardImageSearching: string;
   claimPriceRefreshing: boolean;
+  claimClosing: boolean;
   onCreateClaim: (name: string) => void;
   onUpdateClaimSettings: (patch: { paymentDueAt?: string }) => void;
   onSearchPriceCharting: (search: string, languageGroup: LanguageGroupFilter) => void;
@@ -5219,7 +5225,7 @@ function ClaimsView(props: {
               <button className="secondary-action" onClick={props.onGenerateGrid}><Icon name="image" />Grilla 5x6</button>
               <button className="secondary-action" onClick={props.onExportClaimCsv}><Icon name="download" />Exportar CSV</button>
               <button className="secondary-action" disabled={!canClose} onClick={props.onExportOrders}><Icon name="download" />Exportar ordenes</button>
-              <button className="primary-action" disabled={!canClose} onClick={props.onCloseClaim}><Icon name="close" />Cerrar claim</button>
+              <button className="primary-action" disabled={!canClose || props.claimClosing} onClick={props.onCloseClaim}><Icon name="close" />{props.claimClosing ? "Cerrando..." : "Cerrar claim"}</button>
               <button className="secondary-action danger-action" onClick={props.onArchiveClaim}><Icon name="close" />Cancelar claim</button>
               {summary.missingPrices ? <span className="quality-warning">{summary.missingPrices} con comprador sin precio</span> : null}
             </>
