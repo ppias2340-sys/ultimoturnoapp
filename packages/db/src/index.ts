@@ -6362,11 +6362,41 @@ async function reserveInventoryForClaimCard(db: PGlite, claimId: string, card: C
   );
   const inventoryItemId = linked.rows[0]?.inventory_item_id
     || (await resolveInventoryItemForClaimCard(db, card, actor)).inventoryItemId;
-  const item = await getInventoryItem(db, inventoryItemId, actor.businessId);
-  if (!item) throw new Error(`No se pudo preparar stock para ${card.productName}.`);
   const safeQuantity = Math.max(1, Math.floor(Number(quantity) || 1));
-  if (item.availableQuantity < safeQuantity) throw new Error(`${card.productName}: no hay stock disponible suficiente para reservar ${safeQuantity} unidad(es).`);
-  await db.query("update inventory_items set quantity_reserved = quantity_reserved + $1, updated_at = now() where id = $2 and business_id = $3", [safeQuantity, inventoryItemId, actor.businessId]);
+  const reserved = await db.query<{ added_quantity: number }>(`
+    with locked as (
+      select quantity_on_hand, quantity_reserved
+      from inventory_items
+      where id = $2 and business_id = $3
+      for update
+    )
+    update inventory_items as item
+    set quantity_on_hand = item.quantity_on_hand + greatest(0, $1 - (locked.quantity_on_hand - locked.quantity_reserved)),
+        quantity_reserved = item.quantity_reserved + $1,
+        updated_at = now()
+    from locked
+    where item.id = $2 and item.business_id = $3
+    returning greatest(0, $1 - (locked.quantity_on_hand - locked.quantity_reserved))::integer as added_quantity
+  `, [safeQuantity, inventoryItemId, actor.businessId]);
+  if (!reserved.rows[0]) throw new Error(`No se pudo preparar stock para ${card.productName}.`);
+  const addedQuantity = Math.max(0, Number(reserved.rows[0].added_quantity) || 0);
+  if (addedQuantity > 0) {
+    await db.query(`
+      insert into inventory_movements (
+        id, business_id, inventory_item_id, movement_type, quantity_delta,
+        reference_type, reference_id, idempotency_key, note, created_by
+      ) values ($1, $2, $3, 'claim_stock_in', $4, 'claim', $5, $6, $7, $8)
+    `, [
+      crypto.randomUUID(),
+      actor.businessId,
+      inventoryItemId,
+      addedQuantity,
+      claimId,
+      `claim-close-stock-${claimId}-${card.id}-${saleId}`,
+      `Ingreso automatico al cerrar claim por faltante: ${card.productName}`,
+      actor.id
+    ]);
+  }
   await db.query(`
     insert into reservations (id, business_id, inventory_item_id, quantity, status, channel, external_cart_id, idempotency_key)
     values ($1, $2, $3, $4, 'active', 'claim', $5, $6)

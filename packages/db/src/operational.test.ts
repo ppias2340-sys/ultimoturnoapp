@@ -148,7 +148,7 @@ describe("operational inventory database", () => {
     await db.close();
   });
 
-  it("reuses existing claim stock, reserves it for the order and sells it only when paid", async () => {
+  it("creates only the missing claim stock, reserves it and sells it only when paid", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-claim-existing-stock-"));
     const db = await createOperationalDatabase({ dataDir });
     const user = await getDefaultOperationalUser(db);
@@ -207,17 +207,24 @@ describe("operational inventory database", () => {
     assert.equal(Number(reconciledState.rows[0]?.stocked_quantity || 0), 0);
 
     await updateClaimCard(db, workspace.cards[0].id, { buyer: "Cliente stock", finalPriceArs: 6000 }, user);
+    await db.query("update inventory_items set quantity_reserved = quantity_on_hand where id = $1", [item.id]);
     await closeActiveClaim(db, user);
     stock = await listStockForBusiness(db, user.businessId);
-    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
-    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 1);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 3);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 3);
+    const automaticStockIn = await db.query<{ quantity_delta: number }>(`
+      select quantity_delta
+      from inventory_movements
+      where inventory_item_id = $1 and movement_type = 'claim_stock_in' and note like 'Ingreso automatico%'
+    `, [item.id]);
+    assert.equal(Number(automaticStockIn.rows[0]?.quantity_delta || 0), 1);
 
     const sale = (await listSales(db, user.businessId)).sales.find((row) => row.customerName === "Cliente stock");
     assert.ok(sale);
     await completeReservationSale(db, sale.id, user);
     stock = await listStockForBusiness(db, user.businessId);
-    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 1);
-    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 0);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
+    assert.equal(stock.items.find((row) => row.id === item.id)?.quantityReserved, 2);
     await db.close();
   });
 
