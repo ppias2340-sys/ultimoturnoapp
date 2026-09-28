@@ -711,6 +711,17 @@ type PriceChartingCacheStatus = {
   };
 };
 
+type CoolstuffPriceQuote = {
+  priceChartingId: string;
+  status: "matched" | "not_found" | "ambiguous" | "failed" | "missing";
+  priceUsd: number | null;
+  url: string;
+  searchUrl: string;
+  confidence: number;
+  sourceCondition: string;
+  updatedAt: string;
+};
+
 type InventoryPriceRepairScope = "floor" | "all";
 
 type InventoryPriceRepairCandidate = {
@@ -3972,6 +3983,9 @@ function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRa
   }, [catalogSearch, pickerLanguageGroup]);
   const [catalogPickerOpen, setCatalogPickerOpen] = useState(!editing && !form.name);
   const [showDetails, setShowDetails] = useState(editing || fullPage);
+  const [coolstuffQuote, setCoolstuffQuote] = useState<CoolstuffPriceQuote | null>(null);
+  const [coolstuffLoading, setCoolstuffLoading] = useState(false);
+  const [coolstuffError, setCoolstuffError] = useState("");
   useEffect(() => { if (!editing && !form.name) setCatalogPickerOpen(true); }, [editing, form.name]);
   const set = (patch: Partial<InventoryFormState>) => onChange({ ...form, ...patch });
   const isGraded = Boolean(form.gradingCompany || form.grade || form.condition === "GRADED");
@@ -3980,6 +3994,41 @@ function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRa
   const recommendedPriceArs = recommendedSalePriceArs(form.priceUsd, blueRate);
   const applyRecommendedPrice = () => {
     set({ priceArs: recommendedPriceArs, priceUsd: roundUsd(fromBlueArs(recommendedPriceArs, blueRate)) });
+  };
+  const lookupCoolstuffPrice = async (signal?: AbortSignal) => {
+    if (!form.priceChartingId) {
+      setCoolstuffQuote(null);
+      setCoolstuffError("Esta carta no tiene vinculacion PriceCharting.");
+      return;
+    }
+    setCoolstuffLoading(true);
+    setCoolstuffError("");
+    try {
+      const quote = await api<CoolstuffPriceQuote>(`/coolstuff-prices/lookup?priceChartingId=${encodeURIComponent(form.priceChartingId)}&condition=${encodeURIComponent(form.condition || "NM")}&finish=${encodeURIComponent(form.finish || "normal")}`, { signal });
+      setCoolstuffQuote(quote);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setCoolstuffQuote(null);
+      setCoolstuffError(errorMessage(error));
+    } finally {
+      if (!signal?.aborted) setCoolstuffLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (!form.priceChartingId || catalogPickerOpen) {
+      setCoolstuffQuote(null);
+      setCoolstuffError("");
+      setCoolstuffLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    void lookupCoolstuffPrice(controller.signal);
+    return () => controller.abort();
+  }, [form.priceChartingId, form.condition, form.finish, catalogPickerOpen]);
+  const applyCoolstuffPrice = () => {
+    if (!coolstuffQuote?.priceUsd) return;
+    const priceArs = recommendedSalePriceArs(coolstuffQuote.priceUsd, blueRate);
+    set({ priceArs, priceUsd: coolstuffQuote.priceUsd });
   };
   const setSalePriceArs = (value: string) => {
     if (value === "") {
@@ -4092,6 +4141,17 @@ function InventoryForm({ form, onChange, onSubmit, onCancel, submitLabel, blueRa
               <label>Precio de venta ARS<input type="number" min={minimumSalePriceArs} step={100} value={form.priceArs || ""} onChange={(event) => setSalePriceArs(event.target.value)} onBlur={() => form.priceArs ? set({ priceArs: roundRecommendedArs(form.priceArs), priceUsd: roundUsd(fromBlueArs(roundRecommendedArs(form.priceArs), blueRate)) }) : applyRecommendedPrice()} placeholder="Opcional" /></label>
               <label>Precio de venta USD<input type="number" min={0} step={0.01} value={form.priceUsd ?? ""} onChange={(event) => setSalePriceUsd(event.target.value)} placeholder="Opcional" /></label>
               <div className="price-helper recommended-price-helper"><span>Valor recomendado</span><strong>{formatArs(recommendedPriceArs)}</strong><button type="button" className="secondary-action" onClick={applyRecommendedPrice}>Usar recomendado</button></div>
+              <div className={`price-helper coolstuff-price-helper ${coolstuffQuote?.status === "matched" ? "matched" : ""}`}>
+                <span>CoolStuff {form.condition || "NM"} / {finishLabel(form.finish || "normal")}</span>
+                {coolstuffLoading ? <strong>Consultando...</strong> : coolstuffQuote?.status === "matched" && coolstuffQuote.priceUsd ? <>
+                  <strong>{formatUsd(coolstuffQuote.priceUsd)} · {formatArs(recommendedSalePriceArs(coolstuffQuote.priceUsd, blueRate))}</strong>
+                  <div className="price-helper-actions"><button type="button" className="secondary-action" onClick={applyCoolstuffPrice}>Usar CoolStuff</button><a className="secondary-action" href={coolstuffQuote.url || coolstuffQuote.searchUrl} target="_blank" rel="noreferrer">Ver</a></div>
+                </> : <>
+                  <strong>Sin precio guardado</strong>
+                  <div className="price-helper-actions"><button type="button" className="secondary-action" disabled={coolstuffLoading} onClick={() => void lookupCoolstuffPrice()}>Consultar</button>{coolstuffQuote?.searchUrl ? <a className="secondary-action" href={coolstuffQuote.searchUrl} target="_blank" rel="noreferrer">Buscar</a> : null}</div>
+                </>}
+                {coolstuffError ? <small>{coolstuffError}</small> : null}
+              </div>
               <label>Costo de compra por unidad<input type="number" min={0} step={0.01} value={form.purchaseCost ?? ""} onChange={(event) => set({ purchaseCost: event.target.value === "" ? null : Number(event.target.value) })} placeholder="Sin registrar" /></label>
               <label>Moneda del costo<select value={form.purchaseCurrency} onChange={(event) => set({ purchaseCurrency: event.target.value })}><option value="ARS">ARS</option><option value="USD">USD</option></select></label>
               {!fullPage ? <>

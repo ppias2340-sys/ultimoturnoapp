@@ -104,6 +104,13 @@ npm run coolstuff:prices:daemon
   crezcan `matchedEntries` sin un aumento sostenido de `failedEntries`.
 - Comparar manualmente una muestra por expansion, especialmente Reverse Foil,
   Cosmos, Poke Ball, Master Ball y 1st Edition.
+- En `Inventario > Cargar stock`, elegir una carta ya relevada y confirmar que
+  `Usar CoolStuff` copie el USD exacto y el ARS recomendado. Elegir despues una
+  carta pendiente y comprobar que `Buscar` abra la consulta oficial sin
+  bloquear ni demorar el formulario.
+- No mover el scraping a Vercel ni al navegador: CoolStuff responde de forma
+  inestable a consultas automatizadas. El worker externo llena la cache y la
+  carga de stock solo hace una lectura exacta y rapida.
 
 Senal de exito: el inventario muestra precio y enlace CoolStuff en las cartas
 inglesas con stock, sin cruzar acabados y sin depender de mantener Vercel activo

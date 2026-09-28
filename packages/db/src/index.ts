@@ -935,6 +935,17 @@ export type CoolstuffPriceStatus = {
   lastAttemptAt: string;
 };
 
+export type CoolstuffPriceQuote = {
+  priceChartingId: string;
+  status: "matched" | "not_found" | "ambiguous" | "failed" | "missing";
+  priceUsd: number | null;
+  url: string;
+  searchUrl: string;
+  confidence: number;
+  sourceCondition: string;
+  updatedAt: string;
+};
+
 export type PriceChartingImageCacheStatus = {
   totalEntries: number;
   pendingEntries: number;
@@ -2168,6 +2179,49 @@ export async function getCoolstuffPriceStatus(db: PGlite): Promise<CoolstuffPric
     failedEntries: Number(row.failed_entries || 0),
     staleEntries: Number(row.stale_entries || 0),
     lastAttemptAt: row.last_attempt_at ? String(row.last_attempt_at) : ""
+  };
+}
+
+export async function getCoolstuffPriceQuote(db: PGlite, input: {
+  priceChartingId: string;
+  condition?: string;
+  finish?: string;
+}): Promise<CoolstuffPriceQuote> {
+  const priceChartingId = String(input.priceChartingId || "").trim();
+  if (!priceChartingId) throw new Error("Falta PriceCharting ID para consultar CoolStuff.");
+  const identity = await db.query<{ product_name: string; card_number: string }>(`
+    select product_name, card_number
+    from pricecharting_cache_entries
+    where pricecharting_id = $1
+    limit 1
+  `, [priceChartingId]);
+  if (!identity.rows[0]) throw new Error("La carta no existe en el catalogo PriceCharting.");
+  const quote = await db.query<Record<string, unknown>>(`
+    select status, price_usd, coolstuff_url, confidence, source_condition, updated_at
+    from coolstuff_price_cache
+    where pricecharting_id = $1
+      and lower(condition) = lower($2)
+      and lower(finish) = lower($3)
+    limit 1
+  `, [priceChartingId, String(input.condition || "NM"), String(input.finish || "normal")]);
+  const row = quote.rows[0];
+  const query = [cleanPriceChartingProductName(identity.rows[0].product_name), identity.rows[0].card_number]
+    .filter(Boolean)
+    .join(" - ");
+  const searchUrl = new URL("https://www.coolstuffinc.com/main_search.php");
+  searchUrl.searchParams.set("pa", "searchOnName");
+  searchUrl.searchParams.set("page", "1");
+  searchUrl.searchParams.set("q", query);
+  searchUrl.searchParams.set("resultsPerPage", "25");
+  return {
+    priceChartingId,
+    status: row ? String(row.status || "missing") as CoolstuffPriceQuote["status"] : "missing",
+    priceUsd: optionalNumber(row?.price_usd) ?? null,
+    url: String(row?.coolstuff_url || ""),
+    searchUrl: searchUrl.toString(),
+    confidence: Number(row?.confidence || 0),
+    sourceCondition: String(row?.source_condition || ""),
+    updatedAt: row?.updated_at ? String(row.updated_at) : ""
   };
 }
 

@@ -6693,6 +6693,30 @@ select {
   border-radius: 7px;
 }
 
+.coolstuff-price-helper.matched {
+  border-color: rgba(47, 158, 68, 0.5);
+  background: rgba(47, 158, 68, 0.08);
+}
+
+.price-helper-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.price-helper-actions .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 10px;
+  text-decoration: none;
+}
+
+.coolstuff-price-helper small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .advanced-edit-section summary {
   cursor: pointer;
   color: #ffffff;

@@ -70,6 +70,7 @@ Actualizado: 2026-09-28
 - El carrito movil ahora ocupa la pantalla disponible, mantiene totales y confirmacion accesibles, desplaza solo la lista de cartas y agrupa las herramientas de exportacion en un desplegable compacto.
 - Las cantidades del carrito se editan con botones menos/mas o escritura directa. Los campos aceptan quedar vacios mientras se reemplaza el valor, seleccionan el contenido al enfocarse y ya no fuerzan prefijos como `01` o `013`; el cierre de venta elimina totales y avisos duplicados.
 - La edicion manual de cartas del claim usa la API transaccional aislada del driver. Cambiar precio, comprador, cantidad o tags en paralelo ya no abre un `BEGIN/COMMIT` manual compartido ni devuelve `Ya hay una transaccion manual activa`.
+- La carga de stock consulta automaticamente el precio CoolStuff exacto por carta, condicion y acabado. Cuando existe en la cache muestra USD, conversion recomendada a ARS y permite aplicarlo sin reescribir valores; cuando aun no fue relevado ofrece la busqueda oficial ya completada. La consulta esta habilitada tambien para usuarios `stock_owner`.
 
 ### Navegacion y sincronizacion
 

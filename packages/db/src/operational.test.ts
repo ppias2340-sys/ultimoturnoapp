@@ -23,6 +23,7 @@ import {
   enrichCardIndexFromTcgCsv,
   getCardIndexStatus,
   getCoolstuffPriceStatus,
+  getCoolstuffPriceQuote,
   getPriceChartingImageCacheStatus,
   getTcgplayerPriceCacheStatus,
   loadExampleInventory,
@@ -1841,6 +1842,22 @@ describe("operational inventory database", () => {
     assert.equal(coolstuffVariant?.priceReferences.coolstuff.url, "https://www.coolstuffinc.com/p/Pokemon/Pikachu+-+025+%28Reverse+Foil%29");
     const coolstuffStatus = await getCoolstuffPriceStatus(db);
     assert.equal(coolstuffStatus.matchedEntries, 1);
+    const coolstuffQuote = await getCoolstuffPriceQuote(db, {
+      priceChartingId: "pc-pikachu-25-reverse",
+      condition: "NM",
+      finish: "reverse_holo"
+    });
+    assert.equal(coolstuffQuote.status, "matched");
+    assert.equal(coolstuffQuote.priceUsd, 8.75);
+    assert.equal(coolstuffQuote.url, "https://www.coolstuffinc.com/p/Pokemon/Pikachu+-+025+%28Reverse+Foil%29");
+    assert.match(coolstuffQuote.searchUrl, /^https:\/\/www\.coolstuffinc\.com\/main_search\.php\?/);
+    const missingCoolstuffQuote = await getCoolstuffPriceQuote(db, {
+      priceChartingId: "pc-pikachu-25-reverse",
+      condition: "NM",
+      finish: "normal"
+    });
+    assert.equal(missingCoolstuffQuote.status, "missing");
+    assert.equal(missingCoolstuffQuote.priceUsd, null);
 
     await replaceTcgplayerPriceCache(db, {
       source: "tcgcsv",

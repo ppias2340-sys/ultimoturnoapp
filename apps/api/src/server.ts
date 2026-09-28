@@ -45,6 +45,7 @@ import {
   getAuditLog,
   getCardIndexStatus,
   getCoolstuffPriceStatus,
+  getCoolstuffPriceQuote,
   getDefaultOperationalUser,
   getAuthenticatedUserContext,
   getResellerDashboard,
@@ -3175,7 +3176,7 @@ function requestHasCronAccess(request: IncomingMessage) {
 }
 
 function stockOwnerRouteAllowed(pathname: string, method = "GET") {
-  if (method === "GET" && ["/auth/me", "/health", "/exchange-rate/blue", "/stock", "/sales", "/catalog-cards", "/pricecharting-cache"].includes(pathname)) return true;
+  if (method === "GET" && ["/auth/me", "/health", "/exchange-rate/blue", "/stock", "/sales", "/catalog-cards", "/pricecharting-cache", "/coolstuff-prices/lookup"].includes(pathname)) return true;
   if (method === "POST" && ["/inventory/intake", "/sales"].includes(pathname)) return true;
   if (method === "PUT" && /^\/inventory\/[^/]+$/.test(pathname)) return true;
   if (method === "POST" && /^\/inventory\/[^/]+\/image\/force$/.test(pathname)) return true;
@@ -4726,6 +4727,15 @@ export async function handleRequest(request: IncomingMessage, response: ServerRe
 
     if (url.pathname === "/coolstuff-prices/status" && request.method === "GET") {
       sendJson(response, 200, await getCoolstuffPriceStatus(db));
+      return;
+    }
+
+    if (url.pathname === "/coolstuff-prices/lookup" && request.method === "GET") {
+      sendJson(response, 200, await getCoolstuffPriceQuote(db, {
+        priceChartingId: url.searchParams.get("priceChartingId") || "",
+        condition: url.searchParams.get("condition") || "NM",
+        finish: url.searchParams.get("finish") || "normal"
+      }));
       return;
     }
 
