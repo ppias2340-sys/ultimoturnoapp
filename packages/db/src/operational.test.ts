@@ -192,7 +192,9 @@ describe("operational inventory database", () => {
     await db.query("update inventory_items set quantity_on_hand = 3 where id = $1", [item.id]);
     await db.query("update claim_cards set stock_origin = 'claim_added', stocked_quantity = 1 where id = $1", [workspace.cards[0].id]);
     const reconciled = await reconcileActiveClaimStock(db, user);
-    assert.equal(reconciled.reconciledCards, 1);
+    assert.equal(reconciled.checkedCards, 1);
+    assert.equal(reconciled.correctedCards, 1);
+    assert.equal(reconciled.correctedUnits, 1);
     stock = await listStockForBusiness(db, user.businessId);
     assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 2);
     const reconciledState = await db.query<{ stock_origin: string; stocked_quantity: number }>(
@@ -249,7 +251,9 @@ describe("operational inventory database", () => {
     assert.equal(item.quantityReserved, 0);
 
     const reconciled = await reconcileActiveClaimStock(db, user);
-    assert.equal(reconciled.reconciledCards, 1);
+    assert.equal(reconciled.checkedCards, 1);
+    assert.equal(reconciled.correctedCards, 0);
+    assert.equal(reconciled.correctedUnits, 0);
     stock = await listStockForBusiness(db, user.businessId);
     assert.equal(stock.items.find((row) => row.id === item.id)?.quantityOnHand, 1);
 

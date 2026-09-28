@@ -5889,23 +5889,128 @@ export async function previewActiveClaimOrders(db: PGlite, actor: AuthenticatedU
 export async function reconcileActiveClaimStock(
   db: PGlite,
   actor: AuthenticatedUser
-): Promise<{ workspace: ClaimsWorkspace; reconciledCards: number }> {
+): Promise<{ workspace: ClaimsWorkspace; checkedCards: number; correctedCards: number; correctedUnits: number }> {
   const workspace = await listClaimsWorkspace(db, actor.businessId);
   const claim = workspace.activeClaim;
   if (!claim) throw new Error("No hay un claim activo.");
   await db.exec("begin");
   try {
-    for (const card of workspace.cards) await syncClaimCardStock(db, card.id, actor);
-    await writeAudit(db, actor, "claim.stock.reconcile", "claim", claim.id, null, { cards: workspace.cards.length });
+    const repairable = await db.query<{
+      id: string;
+      inventory_item_id: string;
+      product_name: string;
+      stocked_quantity: number;
+      quantity_on_hand: number;
+      quantity_reserved: number;
+    }>(`
+      select cc.id, cc.inventory_item_id, cc.product_name, cc.stocked_quantity,
+        ii.quantity_on_hand, ii.quantity_reserved
+      from claim_cards cc
+      join inventory_items ii on ii.id = cc.inventory_item_id and ii.business_id = cc.business_id
+      where cc.claim_id = $1
+        and cc.business_id = $2
+        and cc.stock_origin = 'claim_added'
+        and cc.stocked_quantity > 0
+        and not exists (
+          select 1
+          from audit_log a
+          where a.business_id = cc.business_id
+            and a.action = 'inventory.create_from_claim'
+            and a.entity_type = 'inventory_item'
+            and a.entity_id = cc.inventory_item_id::text
+            and coalesce(a.after_data->>'claimCardId', '') = cc.id::text
+        )
+      for update of cc, ii
+    `, [claim.id, actor.businessId]);
+    const corrections = repairable.rows.map((row) => ({
+      cardId: String(row.id),
+      inventoryItemId: String(row.inventory_item_id),
+      productName: String(row.product_name || "Carta"),
+      units: Math.min(
+        Math.max(0, Math.floor(Number(row.stocked_quantity) || 0)),
+        Math.max(0, Math.floor(Number(row.quantity_on_hand) || 0) - Math.floor(Number(row.quantity_reserved) || 0))
+      )
+    }));
+    const unitsByInventory = new Map<string, number>();
+    for (const correction of corrections) {
+      unitsByInventory.set(
+        correction.inventoryItemId,
+        (unitsByInventory.get(correction.inventoryItemId) || 0) + correction.units
+      );
+    }
+    if (unitsByInventory.size) {
+      const params: unknown[] = [];
+      const values = [...unitsByInventory.entries()].map(([inventoryItemId, units], index) => {
+        params.push(inventoryItemId, units);
+        return `($${index * 2 + 1}::uuid, $${index * 2 + 2}::integer)`;
+      });
+      params.push(actor.businessId);
+      await db.query(`
+        with fixes(inventory_item_id, units) as (values ${values.join(",")})
+        update inventory_items ii
+        set quantity_on_hand = greatest(ii.quantity_reserved, ii.quantity_on_hand - fixes.units),
+            updated_at = now()
+        from fixes
+        where ii.id = fixes.inventory_item_id and ii.business_id = $${params.length}
+      `, params);
+    }
+    const movementCorrections = corrections.filter((correction) => correction.units > 0);
+    if (movementCorrections.length) {
+      const params: unknown[] = [];
+      const values = movementCorrections.map((correction, index) => {
+        const offset = index * 8;
+        params.push(
+          crypto.randomUUID(), actor.businessId, correction.inventoryItemId, -correction.units,
+          claim.id, `claim-stock-reconcile-${correction.cardId}`,
+          `Correccion de ingreso duplicado desde claim: ${correction.productName}`, actor.id
+        );
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, 'claim_stock_reconcile', $${offset + 4}, 'claim', $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8})`;
+      });
+      await db.query(`
+        insert into inventory_movements (
+          id, business_id, inventory_item_id, movement_type, quantity_delta,
+          reference_type, reference_id, idempotency_key, note, created_by
+        ) values ${values.join(",")}
+      `, params);
+    }
+    if (corrections.length) {
+      const cardIds = corrections.map((correction) => correction.cardId);
+      await db.query(`
+        update claim_cards
+        set stocked_quantity = 0,
+            stock_origin = 'existing',
+            updated_at = now()
+        where business_id = $1 and id = any($2::uuid[])
+      `, [actor.businessId, cardIds]);
+    }
+    const pending = await db.query<{ id: string }>(`
+      select id
+      from claim_cards
+      where claim_id = $1 and business_id = $2
+        and (
+          inventory_item_id is null
+          or (stock_origin = 'claim_added' and stocked_quantity <> quantity)
+        )
+      order by sort_order, created_at
+    `, [claim.id, actor.businessId]);
+    for (const card of pending.rows) await syncClaimCardStock(db, String(card.id), actor);
+    const correctedUnits = corrections.reduce((sum, correction) => sum + correction.units, 0);
+    await writeAudit(db, actor, "claim.stock.reconcile", "claim", claim.id, null, {
+      checkedCards: workspace.cards.length,
+      correctedCards: corrections.length,
+      correctedUnits
+    });
     await db.exec("commit");
+    return {
+      workspace: await listClaimsWorkspace(db, actor.businessId),
+      checkedCards: workspace.cards.length,
+      correctedCards: corrections.length,
+      correctedUnits
+    };
   } catch (error) {
     await db.exec("rollback");
     throw error;
   }
-  return {
-    workspace: await listClaimsWorkspace(db, actor.businessId),
-    reconciledCards: workspace.cards.length
-  };
 }
 
 async function syncClaimCardStock(db: PGlite, cardId: string, actor: AuthenticatedUser): Promise<string> {
