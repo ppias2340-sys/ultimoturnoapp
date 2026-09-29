@@ -1799,6 +1799,9 @@ export async function replacePriceChartingCache(db: PGlite, input: {
           from jsonb_array_elements_text($1::jsonb) source(price_charting_id)
           where source.price_charting_id = existing.pricecharting_id
         )
+          -- TCGCSV-seeded rows and cards referenced by stock carry catalog links (cascade to card_index_entries).
+          and existing.pricecharting_id not like 'tcgcsv-%'
+          and not exists (select 1 from external_identifiers ei where ei.external_id = existing.pricecharting_id)
       `, [JSON.stringify(uniqueRows.map((row) => row.priceChartingId))]);
     }
     await db.query("update pricecharting_cache_runs set completed_at = clock_timestamp() where id = $1", [runId]);

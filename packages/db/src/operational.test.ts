@@ -57,6 +57,29 @@ import {
 } from "./index.js";
 
 describe("operational inventory database", () => {
+  it("keeps TCGCSV seeds and stocked cards when a PriceCharting refresh prunes missing rows", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-pc-prune-"));
+    const db = await createOperationalDatabase({ dataDir });
+    const user = await getDefaultOperationalUser(db);
+    const row = (priceChartingId: string, name: string) => ({
+      priceChartingId, canonicalUrl: "", sourceUrl: "", productName: name, normalizedName: name.toLowerCase(),
+      expansionName: "Promo", normalizedExpansion: "promo", cardNumber: "1", loosePriceUsd: 1, imageUrl: "", searchKey: name.toLowerCase()
+    });
+    await replacePriceChartingCache(db, {
+      category: "pokemon-cards", sourceHash: "day-1", rowsReceived: 4, rowsSkipped: 0,
+      rows: [row("pc-kept", "Kept"), row("pc-obsolete", "Obsolete"), row("pc-stocked", "Stocked"), row("tcgcsv-123", "Seed")]
+    });
+    await upsertInventoryItem(db, {
+      sku: "PRUNE-STOCKED-1", name: "Stocked", expansion: "Promo", number: "1", language: "EN", condition: "NM", finish: "normal",
+      quantityOnHand: 1, quantityReserved: 0, priceArs: 1000, priceChartingId: "pc-stocked"
+    }, user);
+    await replacePriceChartingCache(db, {
+      category: "pokemon-cards", sourceHash: "day-2", rowsReceived: 1, rowsSkipped: 0, rows: [row("pc-kept", "Kept")]
+    });
+    const remaining = await db.query<{ pricecharting_id: string }>("select pricecharting_id from pricecharting_cache_entries order by pricecharting_id");
+    assert.deepEqual(remaining.rows.map((entry) => entry.pricecharting_id), ["pc-kept", "pc-stocked", "tcgcsv-123"]);
+  });
+
   it("previews and repairs minimum sale prices from external references", async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), "ultimoturno-price-repair-"));
     const db = await createOperationalDatabase({ dataDir });
