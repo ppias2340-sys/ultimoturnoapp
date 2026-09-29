@@ -1,6 +1,6 @@
 # UltimoTurno - estado actual
 
-Actualizado: 2026-09-28
+Actualizado: 2026-09-29
 
 > Esta seccion reemplaza el estado fechado 2026-09-11 que se conserva mas abajo
 > como referencia historica.
@@ -8,7 +8,7 @@ Actualizado: 2026-09-28
 ## Resumen vigente
 
 - Workspace obligatorio: `D:\UltimoTurno\Stock`.
-- Produccion: `https://ultimoturnoapp-api.vercel.app/`.
+- Produccion: `https://ultimoturno.app/` (alias tecnico: `https://ultimoturnoapp-api.vercel.app/`).
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
 - Ultimo commit funcional enviado a produccion: `b117d8a`.
@@ -17,7 +17,13 @@ Actualizado: 2026-09-28
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
   solo de frontend y no modificaron la base de ordenes.
 
-## Trabajo completado del 17 al 28 de septiembre
+## Trabajo completado del 17 al 29 de septiembre
+
+### Dominio productivo
+
+- `ultimoturno.app` esta registrado en la cuenta `ultimoturno20-cloud`, usa los nameservers de Vercel y quedo asociado al proyecto `ultimoturnoapp-api`.
+- La raiz, las rutas directas, el portal de revendedores y `/api/*` se sirven desde el mismo dominio con HTTPS. La URL `vercel.app` queda disponible solo como alias tecnico de respaldo.
+- Los workers de CoolStuff, reparacion de imagenes y restauracion de stock usan `https://ultimoturno.app/api` como valor predeterminado.
 
 ### Rendimiento y densidad visual
 
@@ -505,13 +511,13 @@ La carpeta que importa para codigo nuevo es esta. Si Codex aparece parado en
 App online:
 
 ```text
-https://ultimoturnoapp-api.vercel.app/
+https://ultimoturno.app/
 ```
 
 API online:
 
 ```text
-https://ultimoturnoapp-api.vercel.app/api
+https://ultimoturno.app/api
 ```
 
 Proveedor:

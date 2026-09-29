@@ -44,7 +44,7 @@ function parseOptions(argv: string[]): Options {
     else flags.add(key.trim());
   }
   return {
-    apiBaseUrl: (values.get("api") || process.env.npm_config_api || process.env.ULTIMOTURNO_API_URL || "https://ultimoturnoapp-api.vercel.app/api").replace(/\/+$/, ""),
+    apiBaseUrl: (values.get("api") || process.env.npm_config_api || process.env.ULTIMOTURNO_API_URL || "https://ultimoturno.app/api").replace(/\/+$/, ""),
     accessKey: values.get("access-key") || process.env.ULTIMOTURNO_ACCESS_KEY || "",
     batchSize: clamp(values.get("batch") || process.env.npm_config_batch, 1, 100, 20),
     delayMs: clamp(values.get("delay-ms") || process.env.npm_config_delay_ms, 5000, 60000, 10000),
@@ -77,7 +77,7 @@ Opciones:
   --loop
   --sleep-ms=3600000
   --dry-run
-  --api=https://ultimoturnoapp-api.vercel.app/api
+  --api=https://ultimoturno.app/api
 
 Para opciones personalizadas con esta version de npm:
   npx tsx tools/coolstuff-price-worker.ts --batch=5 --dry-run

@@ -1,5 +1,5 @@
 const args = new Set(process.argv.slice(2));
-const apiBase = String(process.env.ULTIMOTURNO_API_BASE_URL || "https://ultimoturnoapp-api.vercel.app/api").replace(/\/+$/, "");
+const apiBase = String(process.env.ULTIMOTURNO_API_BASE_URL || "https://ultimoturno.app/api").replace(/\/+$/, "");
 const accessKey = String(process.env.ULTIMOTURNO_ACCESS_KEY || "").trim();
 const apply = args.has("--apply") || process.env.ULTIMOTURNO_RESTORE_APPLY === "true" || process.env.npm_config_apply === "true";
 const confirmed = args.has("--confirm") || process.env.npm_config_confirm === "true" || process.env.ULTIMOTURNO_RESTORE_CONFIRM === "RESTAURAR STOCK PILOTO";

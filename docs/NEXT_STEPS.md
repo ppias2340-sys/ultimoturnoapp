@@ -275,7 +275,7 @@ D:\UltimoTurno\Stock; no uses C:\Users\skype\Documents\Stock.
 
 Antes de responder lee AGENTS.md, docs/PROJECT_STATUS.md y docs/NEXT_STEPS.md.
 Revisa git status antes de editar. Produccion es
-https://ultimoturnoapp-api.vercel.app/ con Vercel, Supabase/Postgres y Supabase
+https://ultimoturno.app/ con Vercel, Supabase/Postgres y Supabase
 Storage.
 
 Hay un claim activo y ordenes reales en produccion: no los elimines, canceles ni
@@ -461,5 +461,5 @@ busqueda por idioma, agregar stock, precios recomendados ARS/USD y errores de
 pool en Vercel/Supabase.
 
 No pegar secretos completos en archivos versionados. Usar variables de entorno.
-La app online es https://ultimoturnoapp-api.vercel.app/
+La app online es https://ultimoturno.app/
 ```

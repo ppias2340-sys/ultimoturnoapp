@@ -34,7 +34,7 @@ UltimoTurno online is deployed on Vercel and uses Supabase/Postgres.
 Production app:
 
 ```text
-https://ultimoturnoapp-api.vercel.app/
+https://ultimoturno.app/
 ```
 
 This project is not an OpenAI Sites project. Do not use `.openai/hosting.json`

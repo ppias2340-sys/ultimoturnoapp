@@ -27,7 +27,7 @@ Estado Git y produccion al cerrar este traspaso:
 ```text
 Rama: main
 Commit desplegado: 08a2e0c perf: eliminar contador bloqueante del alta
-Produccion: https://ultimoturnoapp-api.vercel.app/
+Produccion: https://ultimoturno.app/
 DB: Supabase/Postgres por transaction pooler
 Storage: Supabase Storage
 Perfil: PILOTO REAL
@@ -84,7 +84,7 @@ Antes de responder o modificar archivos, lee:
 3. docs/NEXT_STEPS.md
 
 Luego revisa git status y confirma el commit actual. Produccion funciona en
-https://ultimoturnoapp-api.vercel.app/ con Vercel, Supabase/Postgres y Supabase
+https://ultimoturno.app/ con Vercel, Supabase/Postgres y Supabase
 Storage. El ultimo commit de produccion confirmado al cerrar el chat anterior
 fue 08a2e0c.
 

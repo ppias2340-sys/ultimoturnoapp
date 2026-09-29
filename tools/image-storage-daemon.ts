@@ -71,7 +71,7 @@ function parseOptions(argv: string[]): Options {
     else flags.add(key);
   }
   return {
-    apiBaseUrl: (values.get("api") || process.env.ULTIMOTURNO_API_URL || "https://ultimoturnoapp-api.vercel.app/api").replace(/\/+$/g, ""),
+    apiBaseUrl: (values.get("api") || process.env.ULTIMOTURNO_API_URL || "https://ultimoturno.app/api").replace(/\/+$/g, ""),
     accessKey: values.get("access-key") || process.env.ULTIMOTURNO_ACCESS_KEY || "",
     loop: flags.has("loop") || flags.has("continuous"),
     includeAll: flags.has("all") || flags.has("catalog"),

@@ -7,7 +7,7 @@ compras e importacion de cartas Pokemon.
 
 La plataforma activa funciona localmente y online:
 
-- Web/API de produccion: `https://ultimoturnoapp-api.vercel.app/`
+- Web/API de produccion: `https://ultimoturno.app/`
 - Produccion: Vercel + Supabase/Postgres + Supabase Storage.
 - API: `apps/api`.
 - Web administrativa: `apps/admin-web`.
