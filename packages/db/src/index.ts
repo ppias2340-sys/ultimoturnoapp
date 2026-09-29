@@ -3784,7 +3784,7 @@ export async function listStock(db: PGlite): Promise<{ summary: DbStockSummary; 
       coalesce(pc_identifier.external_id, '') as pricecharting_id,
       coalesce(pc_identifier.external_url, pce.canonical_url, '') as pricecharting_url,
       pce.loose_price_usd as pricecharting_loose_price_usd,
-      coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''), '') as tcgplayer_product_id,
+      coalesce(nullif(cie.tcgplayer_product_id, ''), substring(pc_identifier.external_id from '^tcgcsv-([0-9]+)$'), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''), '') as tcgplayer_product_id,
       coalesce(nullif(cie.tcgplayer_url, ''), nullif(sibling_tcg.tcgplayer_url, ''),
         case when coalesce(tcg_image.product_id, '') <> '' then 'https://www.tcgplayer.com/product/' || tcg_image.product_id else '' end, '') as tcgplayer_url,
       coalesce(tpce.sub_type_name, '') as tcgplayer_sub_type_name,
@@ -3873,7 +3873,7 @@ export async function listStock(db: PGlite): Promise<{ summary: DbStockSummary; 
     left join lateral (
       select *
       from tcgplayer_price_cache_entries candidate_price
-      where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
+      where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), substring(pc_identifier.external_id from '^tcgcsv-([0-9]+)$'), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
         and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%' or lower(candidate_price.sub_type_name) = 'holofoil')
         and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
         and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
@@ -4066,7 +4066,7 @@ async function listStockInternal(db: PGlite, businessId: string): Promise<{ summ
       coalesce(pc_identifier.external_id, '') as pricecharting_id,
       coalesce(pc_identifier.external_url, pce.canonical_url, '') as pricecharting_url,
       pce.loose_price_usd as pricecharting_loose_price_usd,
-      coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''), '') as tcgplayer_product_id,
+      coalesce(nullif(cie.tcgplayer_product_id, ''), substring(pc_identifier.external_id from '^tcgcsv-([0-9]+)$'), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''), '') as tcgplayer_product_id,
       coalesce(nullif(cie.tcgplayer_url, ''), nullif(sibling_tcg.tcgplayer_url, ''),
         case when coalesce(tcg_image.product_id, '') <> '' then 'https://www.tcgplayer.com/product/' || tcg_image.product_id else '' end, '') as tcgplayer_url,
       coalesce(tpce.sub_type_name, '') as tcgplayer_sub_type_name,
@@ -4155,7 +4155,7 @@ async function listStockInternal(db: PGlite, businessId: string): Promise<{ summ
     left join lateral (
       select *
       from tcgplayer_price_cache_entries candidate_price
-      where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
+      where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), substring(pc_identifier.external_id from '^tcgcsv-([0-9]+)$'), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
         and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%' or lower(candidate_price.sub_type_name) = 'holofoil')
         and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
         and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')

@@ -1956,6 +1956,15 @@ describe("operational inventory database", () => {
     assert.equal(specialStock.items.find((item) => item.sku === "TEST-TCG-POKEBALL-026")?.priceReferences.tcgplayer.marketPriceUsd, 7.75);
     assert.equal(specialStock.items.find((item) => item.sku === "TEST-TCG-COSMOS-025")?.priceReferences.tcgplayer.marketPriceUsd, null);
 
+    // Cards created from the TCGCSV catalog keep their product id even without a card index entry.
+    await upsertInventoryItem(db, {
+      sku: "TEST-TCG-SEED-556", name: "Pikachu Seed", expansion: "Promo", number: "556", language: "EN", condition: "NM",
+      finish: "holo", priceChartingId: "tcgcsv-556", quantityOnHand: 1, quantityReserved: 0, priceArs: 1000
+    }, user);
+    const seeded = (await listStockForBusiness(db, user.businessId)).items.find((item) => item.sku === "TEST-TCG-SEED-556");
+    assert.equal(seeded?.priceReferences.tcgplayer.productId, "556");
+    assert.equal(seeded?.priceReferences.tcgplayer.marketPriceUsd, 7.75);
+
     const coolstuffTargets = await listCoolstuffPriceTargets(db, user.businessId, { limit: 20 });
     assert.ok(coolstuffTargets.targets.some((target) => target.priceChartingId === "pc-pikachu-25-reverse"));
     await recordCoolstuffPriceObservation(db, {
