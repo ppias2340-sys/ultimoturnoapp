@@ -1873,6 +1873,7 @@ export async function replaceTcgplayerPriceCache(db: PGlite, input: {
     }))
     .filter((row) => row.tcgplayerProductId && row.subTypeName);
   const uniqueRows = [...new Map(validRows.map((row) => [`${row.tcgplayerProductId}\u0000${row.subTypeName.toLowerCase()}`, row])).values()];
+  if (!uniqueRows.length) throw new Error("TCGplayer no contiene filas validas; se conservan los precios anteriores.");
   const duplicateRows = validRows.length - uniqueRows.length;
   const invalidRows = input.rows.length - validRows.length;
 
@@ -2080,7 +2081,7 @@ export async function listCoolstuffPriceTargets(db: PGlite, businessId: string, 
       and (
         cpc.pricecharting_id is null
         or case
-          when cpc.status = 'matched' then cpc.updated_at < now() - ($3::text || ' hours')::interval
+          when cpc.status = 'matched' then cpc.updated_at < now() - ($3::text || ' hours')::interval and cpc.next_attempt_at <= now()
           else cpc.next_attempt_at <= now()
         end
       )
@@ -2138,7 +2139,7 @@ export async function recordCoolstuffPriceObservation(db: PGlite, input: Coolstu
         error_message = excluded.error_message,
         last_attempt_at = now(),
         next_attempt_at = excluded.next_attempt_at,
-        updated_at = now()
+        updated_at = case when excluded.status = 'matched' then now() else coolstuff_price_cache.updated_at end
     `, [
       priceChartingId,
       String(input.condition || "NM"),
@@ -3870,9 +3871,9 @@ export async function listStock(db: PGlite): Promise<{ summary: DbStockSummary; 
       select *
       from tcgplayer_price_cache_entries candidate_price
       where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
-        and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%')
-        and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%')
-        and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%')
+        and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%' or lower(candidate_price.sub_type_name) = 'holofoil')
+        and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
+        and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
       order by case
         when lower(v.finish) like '%reverse%' and lower(candidate_price.sub_type_name) like '%reverse%' then 0
         when lower(v.finish) like '%1st%edition%' and lower(candidate_price.sub_type_name) like '%1st%edition%' then 0
@@ -4152,9 +4153,9 @@ async function listStockInternal(db: PGlite, businessId: string): Promise<{ summ
       select *
       from tcgplayer_price_cache_entries candidate_price
       where candidate_price.tcgplayer_product_id = coalesce(nullif(cie.tcgplayer_product_id, ''), nullif(tcg_image.product_id, ''), nullif(sibling_tcg.tcgplayer_product_id, ''))
-        and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%')
-        and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%')
-        and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%')
+        and (lower(v.finish) not like '%cosmos%' or lower(candidate_price.sub_type_name) like '%cosmos%' or lower(candidate_price.sub_type_name) = 'holofoil')
+        and (lower(v.finish) not like '%master%ball%' or lower(candidate_price.sub_type_name) like '%master%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
+        and (lower(v.finish) not like '%poke%ball%' or lower(candidate_price.sub_type_name) like '%poke%ball%' or lower(candidate_price.sub_type_name) = 'holofoil')
       order by case
         when lower(v.finish) like '%reverse%' and lower(candidate_price.sub_type_name) like '%reverse%' then 0
         when lower(v.finish) like '%1st%edition%' and lower(candidate_price.sub_type_name) like '%1st%edition%' then 0
