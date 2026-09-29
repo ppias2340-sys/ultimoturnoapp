@@ -11,7 +11,7 @@ Actualizado: 2026-09-29
 - Produccion: `https://ultimoturno.app/` (alias tecnico: `https://ultimoturnoapp-api.vercel.app/`).
 - Infraestructura: Vercel + Supabase/Postgres + Supabase Storage.
 - Rama de despliegue: `main`.
-- Ultimo commit funcional enviado a produccion: `f469939`.
+- Ultimo commit funcional desplegado y verificado: `2360c07`.
 - El claim activo de produccion contiene datos reales: no eliminarlo, cancelarlo
   ni recrearlo durante verificaciones.
 - Las ordenes tambien son datos reales. Las mejoras visuales recientes fueron
@@ -24,6 +24,7 @@ Actualizado: 2026-09-29
 - `ultimoturno.app` esta registrado en la cuenta `ultimoturno20-cloud`, usa los nameservers de Vercel y quedo asociado al proyecto `ultimoturnoapp-api`.
 - La raiz, las rutas directas, el portal de revendedores y `/api/*` se sirven desde el mismo dominio con HTTPS. La URL `vercel.app` queda disponible solo como alias tecnico de respaldo.
 - Los workers de CoolStuff, reparacion de imagenes y restauracion de stock usan `https://ultimoturno.app/api` como valor predeterminado.
+- La API acepta automaticamente peticiones HTTPS cuyo `Origin` coincide con el host servido. Esto habilita `PUT` y `POST` desde el dominio personalizado sin abrir CORS a terceros; la preflight y una ruta protegida se verificaron online con respuestas `204` y `200`.
 
 ### Rendimiento y densidad visual
 
