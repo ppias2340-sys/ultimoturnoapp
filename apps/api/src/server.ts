@@ -289,14 +289,6 @@ for (const vercelHost of [
   const normalizedHost = String(vercelHost || "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   if (normalizedHost) allowedOrigins.push(`https://${normalizedHost}`);
 }
-for (const vercelHost of [
-  process.env.VERCEL_URL,
-  process.env.VERCEL_BRANCH_URL,
-  process.env.VERCEL_PROJECT_PRODUCTION_URL
-]) {
-  const normalizedHost = String(vercelHost || "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  if (normalizedHost) allowedOrigins.push(`https://${normalizedHost}`);
-}
 const dataProfile = String(process.env.ULTIMOTURNO_DATA_PROFILE || "PILOTO REAL").trim() || "PILOTO REAL";
 const allowExamples = String(process.env.ULTIMOTURNO_ALLOW_EXAMPLES || "false").toLowerCase() !== "false";
 const priceChartingAutoRefreshEnabled = String(process.env.PRICECHARTING_AUTO_REFRESH_ENABLED || "false").toLowerCase() !== "false";
@@ -2814,6 +2806,19 @@ function isLocalBrowserOrigin(origin: string) {
   }
 }
 
+function isSameRequestOrigin(request: IncomingMessage, origin: string) {
+  try {
+    const forwardedHostHeader = request.headers["x-forwarded-host"];
+    const forwardedHost = Array.isArray(forwardedHostHeader) ? forwardedHostHeader[0] : forwardedHostHeader || "";
+    const requestHost = String(forwardedHost || request.headers.host || "").split(",")[0].trim().toLowerCase();
+    const originUrl = new URL(origin);
+    if (!requestHost || originUrl.host.toLowerCase() !== requestHost) return false;
+    return !productionMode || originUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function requestCorsOrigin(request: IncomingMessage) {
   const rawOrigin = request.headers.origin;
   const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin || "";
@@ -2821,6 +2826,7 @@ function requestCorsOrigin(request: IncomingMessage) {
   if (!normalized) return "";
   if (allowedOrigins.includes("*")) return normalized;
   if (allowedOrigins.includes(normalized)) return normalized;
+  if (isSameRequestOrigin(request, normalized)) return normalized;
   if (!productionMode && isLocalBrowserOrigin(normalized)) return normalized;
   if (!productionMode && allowedOrigins.length === 0) return "*";
   return "";
